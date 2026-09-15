@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FlowCanvas Studio - Presentation Flowchart Designer</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['Fira Code', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- React 18 & Babel CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.2); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.4); }
+
+    .canvas-grid-dots {
+      background-image: radial-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    .canvas-grid-light-dots {
+      background-image: radial-gradient(rgba(0, 0, 0, 0.15) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    .canvas-grid-lines {
+      background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                        linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    .canvas-grid-light-lines {
+      background-image: linear-gradient(to right, rgba(0, 0, 0, 0.06) 1px, transparent 1px),
+                        linear-gradient(to bottom, rgba(0, 0, 0, 0.06) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    @keyframes dash {
+      to { stroke-dashoffset: -20; }
+    }
+    .animate-flow {
+      stroke-dasharray: 6 4;
+      animation: dash 0.8s linear infinite;
+    }
+  </style>
+</head>
+<body class="h-full bg-slate-950 text-slate-100 antialiased overflow-hidden select-none font-sans">
+  <div id="root" class="h-full w-full"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    // --- PRESENTATION THEMES & CONSTANTS ---
+    const PRESENTATION_THEMES = [
+      {
+        id: 'executive-dark',
+        name: 'Executive Dark',
+        canvasBgClass: 'bg-slate-900 canvas-grid-dots',
+        textDark: false,
+        bgColor: '#0f172a',
+        nodeColors: {
+          process: { fill: '#1e293b', stroke: '#3b82f6', text: '#f8fafc' },
+          decision: { fill: '#312e81', stroke: '#818cf8', text: '#f8fafc' },
+          terminal: { fill: '#064e3b', stroke: '#34d399', text: '#f8fafc' },
+          database: { fill: '#451a03', stroke: '#fb923c', text: '#f8fafc' },
+          document: { fill: '#371b58', stroke: '#c084fc', text: '#f8fafc' },
+          note: { fill: '#713f12', stroke: '#facc15', text: '#fef08a' }
+        }
+      },
+      {
+        id: 'clean-light',
+        name: 'Clean Light (Deck ready)',
+        canvasBgClass: 'bg-slate-50 canvas-grid-light-dots',
+        textDark: true,
+        bgColor: '#f8fafc',
+        nodeColors: {
+          process: { fill: '#ffffff', stroke: '#2563eb', text: '#0f172a' },
+          decision: { fill: '#eff6ff', stroke: '#3b82f6', text: '#1e3a8a' },
+          terminal: { fill: '#f0fdf4', stroke: '#16a34a', text: '#14532d' },
+          database: { fill: '#fff7ed', stroke: '#ea580c', text: '#7c2d12' },
+          document: { fill: '#faf5ff', stroke: '#9333ea', text: '#581c87' },
+          note: { fill: '#fefce8', stroke: '#ca8a04', text: '#713f12' }
+        }
+      },
+      {
+        id: 'cyber-neon',
+        name: 'Vibrant Cyber Neon',
+        canvasBgClass: 'bg-zinc-950 canvas-grid-lines',
+        textDark: false,
+        bgColor: '#050515',
+        nodeColors: {
+          process: { fill: '#090d16', stroke: '#06b6d4', text: '#e0f2fe' },
+          decision: { fill: '#160d29', stroke: '#d946ef', text: '#fae8ff' },
+          terminal: { fill: '#051b14', stroke: '#10b981', text: '#d1fae5' },
+          database: { fill: '#1f1300', stroke: '#f59e0b', text: '#fef3c7' },
+          document: { fill: '#1a0928', stroke: '#a855f7', text: '#f3e8ff' },
+          note: { fill: '#241a02', stroke: '#eab308', text: '#fef9c3' }
+        }
+      }
+    ];
+
+    const SHAPE_TYPES = [
+      { id: 'terminal', name: 'Start / End', icon: 'circle-dot', defaultWidth: 140, defaultHeight: 60, shape: 'pill' },
+      { id: 'process', name: 'Process Block', icon: 'square', defaultWidth: 160, defaultHeight: 80, shape: 'rectangle' },
+      { id: 'decision', name: 'Decision Point', icon: 'diamond', defaultWidth: 150, defaultHeight: 100, shape: 'diamond' },
+      { id: 'database', name: 'Database', icon: 'database', defaultWidth: 140, defaultHeight: 90, shape: 'cylinder' },
+      { id: 'document', name: 'Document', icon: 'file-text', defaultWidth: 150, defaultHeight: 85, shape: 'document' },
+      { id: 'input', name: 'Input / Output', icon: 'move-horizontal', defaultWidth: 160, defaultHeight: 70, shape: 'parallelogram' },
+      { id: 'note', name: 'Sticky Note', icon: 'sticky-note', defaultWidth: 150, defaultHeight: 110, shape: 'note' }
+    ];
+
+    const PRESET_TEMPLATES = [
+      {
+        id: 'user-auth-flow',
+        name: 'User Authentication Flow',
+        description: 'Standard login, validation, and session creation flowchart for technical slides.',
+        nodes: [
+          { id: 'n1', type: 'terminal', label: 'User Opens App', x: 100, y: 220, width: 150, height: 60, fill: '#064e3b', stroke: '#34d399', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '600', stepIndex: 1 },
+          { id: 'n2', type: 'input', label: 'Enter Credentials', x: 310, y: 215, width: 160, height: 70, fill: '#1e293b', stroke: '#3b82f6', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '500', stepIndex: 2 },
+          { id: 'n3', type: 'decision', label: 'Valid Login?', x: 530, y: 200, width: 150, height: 100, fill: '#312e81', stroke: '#818cf8', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '600', stepIndex: 3 },
+          { id: 'n4', type: 'database', label: 'Fetch Profile', x: 740, y: 210, width: 140, height: 80, fill: '#451a03', stroke: '#fb923c', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '500', stepIndex: 4 },
+          { id: 'n5', type: 'terminal', label: 'Grant Access', x: 940, y: 220, width: 150, height: 60, fill: '#064e3b', stroke: '#34d399', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '600', stepIndex: 5 },
+          { id: 'n6', type: 'process', label: 'Show Error Alert', x: 520, y: 370, width: 170, height: 75, fill: '#881337', stroke: '#f43f5e', text: '#ffe4e6', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 6 }
+        ],
+        edges: [
+          { id: 'e1', from: 'n1', to: 'n2', label: '', style: 'orthogonal' },
+          { id: 'e2', from: 'n2', to: 'n3', label: 'Submit', style: 'orthogonal' },
+          { id: 'e3', from: 'n3', to: 'n4', label: 'Yes', style: 'orthogonal' },
+          { id: 'e4', from: 'n4', to: 'n5', label: 'Success', style: 'orthogonal' },
+          { id: 'e5', from: 'n3', to: 'n6', label: 'No', style: 'orthogonal' }
+        ]
+      },
+      {
+        id: 'sales-pipeline',
+        name: 'Sales Lead Qualification Pipeline',
+        description: 'Executive overview of lead ingestion, evaluation, and account assignment.',
+        nodes: [
+          { id: 'm1', type: 'terminal', label: 'Inbound Lead', x: 120, y: 180, width: 150, height: 60, fill: '#0284c7', stroke: '#38bdf8', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '600', stepIndex: 1 },
+          { id: 'm2', type: 'decision', label: 'Size > 100?', x: 330, y: 160, width: 150, height: 100, fill: '#4338ca', stroke: '#818cf8', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '600', stepIndex: 2 },
+          { id: 'm3', type: 'process', label: 'Assign Enterprise AE', x: 550, y: 110, width: 170, height: 75, fill: '#047857', stroke: '#34d399', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '600', stepIndex: 3 },
+          { id: 'm4', type: 'process', label: 'Route SMB Nurture', x: 550, y: 250, width: 170, height: 75, fill: '#b45309', stroke: '#fbbf24', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '500', stepIndex: 4 },
+          { id: 'm5', type: 'document', label: 'Send Demo Deck', x: 770, y: 110, width: 150, height: 75, fill: '#6b21a8', stroke: '#c084fc', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '500', stepIndex: 5 }
+        ],
+        edges: [
+          { id: 'ge1', from: 'm1', to: 'm2', label: 'Form Submit', style: 'curved' },
+          { id: 'ge2', from: 'm2', to: 'm3', label: 'Yes', style: 'orthogonal' },
+          { id: 'ge3', from: 'm2', to: 'm4', label: 'No', style: 'orthogonal' },
+          { id: 'ge4', from: 'm3', to: 'm5', label: 'Qualify', style: 'straight' }
+        ]
+      }
+    ];
+
+    // --- GEOMETRY HELPERS ---
+    function getNodePorts(node) {
+      const { x, y, width, height } = node;
+      const centerX = x + width / 2;
+      const centerY = y + height / 2;
+      return {
+        top: { x: centerX, y: y, dir: 'top' },
+        right: { x: x + width, y: centerY, dir: 'right' },
+        bottom: { x: centerX, y: y + height, dir: 'bottom' },
+        left: { x: x, y: centerY, dir: 'left' },
+        center: { x: centerX, y: centerY, dir: 'center' }
+      };
+    }
+
+    function getBestPortPair(sNode, tNode) {
+      const sPorts = getNodePorts(sNode);
+      const tPorts = getNodePorts(tNode);
+      const keys = ['top', 'right', 'bottom', 'left'];
+      let minDist = Infinity;
+      let bestPair = { fromPort: sPorts.right, toPort: tPorts.left };
+
+      keys.forEach(sk => {
+        keys.forEach(tk => {
+          const sp = sPorts[sk];
+          const tp = tPorts[tk];
+          const dist = Math.hypot(tp.x - sp.x, tp.y - sp.y);
+          if (dist < minDist) {
+            minDist = dist;
+            bestPair = { fromPort: sp, toPort: tp };
+          }
+        });
+      });
+      return bestPair;
+    }
+
+    function calculatePathData(fromP, toP, style = 'orthogonal') {
+      const { x: x1, y: y1, dir: dir1 = 'right' } = fromP;
+      const { x: x2, y: y2, dir: dir2 = 'left' } = toP;
+
+      if (style === 'straight') {
+        return { d: `M ${x1} ${y1} L ${x2} ${y2}`, midPoint: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 } };
+      }
+      if (style === 'curved') {
+        let dx = Math.abs(x2 - x1) / 2;
+        let dy = Math.abs(y2 - y1) / 2;
+        let cx1 = x1, cy1 = y1, cx2 = x2, cy2 = y2;
+        if (dir1 === 'right') cx1 += Math.max(dx, 40);
+        else if (dir1 === 'left') cx1 -= Math.max(dx, 40);
+        else if (dir1 === 'bottom') cy1 += Math.max(dy, 40);
+        else if (dir1 === 'top') cy1 -= Math.max(dy, 40);
+
+        if (dir2 === 'right') cx2 += Math.max(dx, 40);
+        else if (dir2 === 'left') cx2 -= Math.max(dx, 40);
+        else if (dir2 === 'bottom') cy2 += Math.max(dy, 40);
+        else if (dir2 === 'top') cy2 -= Math.max(dy, 40);
+
+        const midPoint = {
+          x: 0.125 * x1 + 0.375 * cx1 + 0.375 * cx2 + 0.125 * x2,
+          y: 0.125 * y1 + 0.375 * cy1 + 0.375 * cy2 + 0.125 * y2
+        };
+        return { d: `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`, midPoint };
+      }
+
+      // Orthogonal
+      let midX = (x1 + x2) / 2;
+      let midY = (y1 + y2) / 2;
+      let pathString = `M ${x1} ${y1} `;
+      if (dir1 === 'left' || dir1 === 'right') {
+        pathString += `L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
+      } else {
+        pathString += `L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`;
+      }
+      return { d: pathString, midPoint: { x: midX, y: midY } };
+    }
+
+    // --- MAIN APP COMPONENT ---
+    function App() {
+      const [theme, setTheme] = useState(PRESENTATION_THEMES[0]);
+      const [nodes, setNodes] = useState(PRESET_TEMPLATES[0].nodes);
+      const [edges, setEdges] = useState(PRESET_TEMPLATES[0].edges);
+
+      const [selectedNodeIds, setSelectedNodeIds] = useState([]);
+      const [selectedEdgeId, setSelectedEdgeId] = useState(null);
+
+      const [zoom, setZoom] = useState(1.0);
+      const [pan, setPan] = useState({ x: 0, y: 0 });
+      const [activeConnectorStyle, setActiveConnectorStyle] = useState('orthogonal');
+
+      // Modals
+      const [showPresentation, setShowPresentation] = useState(false);
+      const [showExport, setShowExport] = useState(false);
+      const [showTemplates, setShowTemplates] = useState(false);
+
+      // Drag state
+      const containerRef = useRef(null);
+      const [isPanning, setIsPanning] = useState(false);
+      const [startPanMouse, setStartPanMouse] = useState({ x: 0, y: 0 });
+      const [draggingNodeId, setDraggingNodeId] = useState(null);
+      const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+      const [snapLines, setSnapLines] = useState([]);
+      const [connectingFrom, setConnectingFrom] = useState(null);
+      const [mouseCanvasPos, setMouseCanvasPos] = useState({ x: 0, y: 0 });
+
+      // Inline text editing
+      const [editingNodeId, setEditingNodeId] = useState(null);
+      const [editingEdgeId, setEditingEdgeId] = useState(null);
+      const [tempLabel, setTempLabel] = useState('');
+
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      });
+
+      const screenToCanvas = (sx, sy) => {
+        if (!containerRef.current) return { x: 0, y: 0 };
+        const rect = containerRef.current.getBoundingClientRect();
+        return {
+          x: (sx - rect.left - pan.x) / zoom,
+          y: (sy - rect.top - pan.y) / zoom
+        };
+      };
+
+      const handleCanvasMouseDown = (e) => {
+        if (e.target.tagName === 'svg' || e.target.classList.contains('canvas-bg')) {
+          setSelectedNodeIds([]);
+          setSelectedEdgeId(null);
+          setEditingNodeId(null);
+          setEditingEdgeId(null);
+          setIsPanning(true);
+          setStartPanMouse({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+        }
+      };
+
+      const handleCanvasMouseMove = (e) => {
+        const cPos = screenToCanvas(e.clientX, e.clientY);
+        setMouseCanvasPos(cPos);
+
+        if (isPanning) {
+          setPan({ x: e.clientX - startPanMouse.x, y: e.clientY - startPanMouse.y });
+          return;
+        }
+
+        if (draggingNodeId) {
+          let newX = cPos.x - dragOffset.x;
+          let newY = cPos.y - dragOffset.y;
+
+          const currNode = nodes.find(n => n.id === draggingNodeId);
+          if (currNode) {
+            const newSnapLines = [];
+            const cCenterX = newX + currNode.width / 2;
+            const cCenterY = newY + currNode.height / 2;
+
+            nodes.forEach(other => {
+              if (other.id === draggingNodeId) return;
+              const oCenterX = other.x + other.width / 2;
+              const oCenterY = other.y + other.height / 2;
+
+              if (Math.abs(cCenterX - oCenterX) < 10) {
+                newX = oCenterX - currNode.width / 2;
+                newSnapLines.push({ type: 'x', x: oCenterX });
+              }
+              if (Math.abs(cCenterY - oCenterY) < 10) {
+                newY = oCenterY - currNode.height / 2;
+                newSnapLines.push({ type: 'y', y: oCenterY });
+              }
+            });
+            setSnapLines(newSnapLines);
+          }
+
+          setNodes(nodes.map(n => n.id === draggingNodeId ? { ...n, x: Math.round(newX), y: Math.round(newY) } : n));
+        }
+      };
+
+      const handleCanvasMouseUp = () => {
+        setIsPanning(false);
+        setDraggingNodeId(null);
+        setSnapLines([]);
+        setConnectingFrom(null);
+      };
+
+      const handleNodeMouseDown = (e, node) => {
+        e.stopPropagation();
+        setSelectedEdgeId(null);
+        setSelectedNodeIds([node.id]);
+        const cPos = screenToCanvas(e.clientX, e.clientY);
+        setDraggingNodeId(node.id);
+        setDragOffset({ x: cPos.x - node.x, y: cPos.y - node.y });
+      };
+
+      const handlePortMouseDown = (e, node, portDir) => {
+        e.stopPropagation();
+        const ports = getNodePorts(node);
+        setConnectingFrom({ nodeId: node.id, port: ports[portDir] });
+      };
+
+      const handlePortMouseUp = (e, targetNode) => {
+        e.stopPropagation();
+        if (connectingFrom && connectingFrom.nodeId !== targetNode.id) {
+          const newEdge = {
+            id: 'edge_' + Date.now(),
+            from: connectingFrom.nodeId,
+            to: targetNode.id,
+            label: '',
+            style: activeConnectorStyle || 'orthogonal'
+          };
+          setEdges([...edges, newEdge]);
+        }
+        setConnectingFrom(null);
+      };
+
+      const addNodeFromSidebar = (shapeItem) => {
+        const colors = theme.nodeColors[shapeItem.id] || theme.nodeColors.process;
+        const newNode = {
+          id: 'node_' + Date.now(),
+          type: shapeItem.id,
+          label: shapeItem.name,
+          x: 350 + Math.random() * 40,
+          y: 200 + Math.random() * 40,
+          width: shapeItem.defaultWidth,
+          height: shapeItem.defaultHeight,
+          fill: colors.fill,
+          stroke: colors.stroke,
+          text: colors.text,
+          fontSize: 14,
+          fontWeight: '500',
+          stepIndex: nodes.length + 1
+        };
+        setNodes([...nodes, newNode]);
+        setSelectedNodeIds([newNode.id]);
+      };
+
+      const selectedNode = nodes.find(n => n.id === selectedNodeIds[0]);
+      const selectedEdge = edges.find(e => e.id === selectedEdgeId);
+
+      return (
+        <div className="h-screen w-screen flex flex-col bg-slate-950 overflow-hidden font-sans">
+          {/* HEADER TOOLBAR */}
+          <header className="h-16 bg-slate-900/90 border-b border-slate-800 px-4 flex items-center justify-between z-30">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/25 font-bold text-white">
+                ⚡
+              </div>
+              <div>
+                <h1 className="font-bold text-slate-100 text-base leading-tight tracking-tight flex items-center gap-2">
+                  FlowCanvas Studio
+                  <span className="text-[10px] font-semibold uppercase tracking-wider bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/30">
+                    Deck Edition
+                  </span>
+                </h1>
+                <p className="text-[11px] text-slate-400">Presentation Flowchart Designer</p>
+              </div>
+              <button
+                onClick={() => setShowTemplates(true)}
+                className="ml-4 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+              >
+                Templates & Presets
+              </button>
+            </div>
+
+            {/* Canvas Zoom & Theme */}
+            <div className="flex items-center gap-2 bg-slate-800/80 p-1 rounded-xl border border-slate-700">
+              <button onClick={() => setZoom(Math.max(0.4, zoom - 0.1))} className="px-2 py-1 text-slate-300 hover:text-white">-</button>
+              <span className="text-xs font-mono w-12 text-center">{Math.round(zoom * 100)}%</span>
+              <button onClick={() => setZoom(Math.min(2.0, zoom + 0.1))} className="px-2 py-1 text-slate-300 hover:text-white">+</button>
+              <div className="h-4 w-[1px] bg-slate-700 mx-1" />
+              <select
+                value={theme.id}
+                onChange={(e) => setTheme(PRESENTATION_THEMES.find(t => t.id === e.target.value))}
+                className="bg-transparent text-xs font-medium text-slate-200 outline-none cursor-pointer px-1"
+              >
+                {PRESENTATION_THEMES.map(t => (
+                  <option key={t.id} value={t.id} className="bg-slate-900">{t.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={() => setShowPresentation(true)}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-md transition"
+              >
+                ▶ Present Flow
+              </button>
+              <button
+                onClick={() => setShowExport(true)}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-md transition"
+              >
+                Export for Deck
+              </button>
+            </div>
+          </header>
+
+          {/* MAIN BODY */}
+          <div className="flex-1 flex overflow-hidden relative">
+            {/* SIDEBAR */}
+            <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col z-20">
+              <div className="p-4 border-b border-slate-800">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Flow Shapes</h2>
+                <p className="text-[11px] text-slate-500 mt-1">Click to add shapes into your canvas</p>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {SHAPE_TYPES.map(shape => (
+                  <div
+                    key={shape.id}
+                    onClick={() => addNodeFromSidebar(shape)}
+                    className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/50 hover:border-blue-500/50 cursor-pointer transition"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-blue-400 font-bold text-xs">
+                      {shape.name[0]}
+                    </div>
+                    <div>
+                      <div className="text-xs font-medium text-slate-200">{shape.name}</div>
+                      <div className="text-[10px] text-slate-500 capitalize">{shape.shape} block</div>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="pt-4 border-t border-slate-800 mt-4">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Connector Line Style</h3>
+                  <div className="grid grid-cols-3 gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                    {['orthogonal', 'curved', 'straight'].map(st => (
+                      <button
+                        key={st}
+                        onClick={() => setActiveConnectorStyle(st)}
+                        className={`p-1.5 rounded-lg text-[11px] font-medium capitalize ${
+                          activeConnectorStyle === st ? 'bg-blue-600 text-white' : 'text-slate-400'
+                        }`}
+                      >
+                        {st}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </aside>
+
+            {/* CANVAS */}
+            <div
+              ref={containerRef}
+              onMouseDown={handleCanvasMouseDown}
+              onMouseMove={handleCanvasMouseMove}
+              onMouseUp={handleCanvasMouseUp}
+              className={`relative flex-1 h-full w-full overflow-hidden cursor-crosshair canvas-bg ${theme.canvasBgClass}`}
+            >
+              <svg className="w-full h-full absolute inset-0 pointer-events-none">
+                <defs>
+                  <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+                  </marker>
+                  <marker id="arrow-sel" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" />
+                  </marker>
+                </defs>
+
+                <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+                  {/* Snap Alignment Lines */}
+                  {snapLines.map((line, idx) => (
+                    line.type === 'x' ? (
+                      <line key={idx} x1={line.x} y1={-10000} x2={line.x} y2={10000} stroke="#3b82f6" strokeDasharray="4 4" strokeWidth="1" />
+                    ) : (
+                      <line key={idx} x1={-10000} y1={line.y} x2={10000} y2={line.y} stroke="#3b82f6" strokeDasharray="4 4" strokeWidth="1" />
+                    )
+                  ))}
+
+                  {/* Edges */}
+                  {edges.map(edge => {
+                    const sn = nodes.find(n => n.id === edge.from);
+                    const tn = nodes.find(n => n.id === edge.to);
+                    if (!sn || !tn) return null;
+                    const { fromPort, toPort } = getBestPortPair(sn, tn);
+                    const pathInfo = calculatePathData(fromPort, toPort, edge.style || 'orthogonal');
+                    const isSel = selectedEdgeId === edge.id;
+
+                    return (
+                      <g key={edge.id} className="pointer-events-auto">
+                        <path
+                          d={pathInfo.d}
+                          fill="none"
+                          stroke="transparent"
+                          strokeWidth="16"
+                          onClick={(e) => { e.stopPropagation(); setSelectedEdgeId(edge.id); setSelectedNodeIds([]); }}
+                          onDoubleClick={(e) => { e.stopPropagation(); setEditingEdgeId(edge.id); setTempLabel(edge.label || ''); }}
+                        />
+                        <path
+                          d={pathInfo.d}
+                          fill="none"
+                          stroke={isSel ? '#3b82f6' : (edge.stroke || '#64748b')}
+                          strokeWidth={isSel ? '3' : '2'}
+                          markerEnd={isSel ? 'url(#arrow-sel)' : 'url(#arrow)'}
+                        />
+                        {edge.label && (
+                          <g transform={`translate(${pathInfo.midPoint.x}, ${pathInfo.midPoint.y})`}>
+                            <rect x={-(edge.label.length * 3.5 + 8)} y="-10" width={edge.label.length * 7 + 16} height="20" rx="4" fill="#0f172a" stroke="#475569" />
+                            <text x="0" y="3" textAnchor="middle" fill="#f8fafc" fontSize="11">{edge.label}</text>
+                          </g>
+                        )}
+                      </g>
+                    );
+                  })}
+
+                  {/* Drag connection */}
+                  {connectingFrom && (
+                    <path
+                      d={calculatePathData(connectingFrom.port, { x: mouseCanvasPos.x, y: mouseCanvasPos.y, dir: 'center' }, activeConnectorStyle).d}
+                      fill="none"
+                      stroke="#3b82f6"
+                      strokeWidth="2.5"
+                      strokeDasharray="6 4"
+                    />
+                  )}
+
+                  {/* Nodes */}
+                  {nodes.map(node => {
+                    const isSel = selectedNodeIds.includes(node.id);
+                    const ports = getNodePorts(node);
+
+                    return (
+                      <g
+                        key={node.id}
+                        transform={`translate(${node.x}, ${node.y})`}
+                        onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                        className="pointer-events-auto group cursor-grab active:cursor-grabbing"
+                      >
+                        <rect
+                          width={node.width}
+                          height={node.height}
+                          rx="10"
+                          fill={node.fill || '#1e293b'}
+                          stroke={isSel ? '#3b82f6' : (node.stroke || '#475569')}
+                          strokeWidth={isSel ? '3' : '2'}
+                        />
+                        <text
+                          x={node.width / 2}
+                          y={node.height / 2 + 4}
+                          textAnchor="middle"
+                          fill={node.text || '#f8fafc'}
+                          fontSize={node.fontSize || 14}
+                          fontWeight={node.fontWeight || '500'}
+                          fontFamily={node.font || 'Inter'}
+                          className="pointer-events-none select-none"
+                        >
+                          {node.label}
+                        </text>
+
+                        {/* Step Index Badge */}
+                        <g transform={`translate(${node.width - 8}, -6)`}>
+                          <circle r="10" fill="#3b82f6" stroke="#ffffff" strokeWidth="1.5" />
+                          <text y="3.5" textAnchor="middle" fill="#ffffff" fontSize="10" fontWeight="bold">
+                            {node.stepIndex}
+                          </text>
+                        </g>
+
+                        {/* Connection Ports */}
+                        {['top', 'right', 'bottom', 'left'].map(dir => (
+                          <circle
+                            key={dir}
+                            cx={ports[dir].x - node.x}
+                            cy={ports[dir].y - node.y}
+                            r="6"
+                            fill="#3b82f6"
+                            stroke="#ffffff"
+                            strokeWidth="2"
+                            onMouseDown={(e) => handlePortMouseDown(e, node, dir)}
+                            onMouseUp={(e) => handlePortMouseUp(e, node)}
+                            className="opacity-0 group-hover:opacity-100 cursor-crosshair transition-opacity"
+                          />
+                        ))}
+                      </g>
+                    );
+                  })}
+                </g>
+              </svg>
+            </div>
+
+            {/* INSPECTOR */}
+            <aside className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col z-20">
+              <div className="p-4 border-b border-slate-800">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Inspector</h2>
+              </div>
+              <div className="p-4 space-y-4 text-xs">
+                {selectedNode ? (
+                  <>
+                    <div>
+                      <label className="font-semibold text-slate-400 block mb-1">Text Label</label>
+                      <textarea
+                        value={selectedNode.label}
+                        onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, label: e.target.value } : n))}
+                        rows={2}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-slate-400 block mb-1">Presentation Step Index</label>
+                      <input
+                        type="number"
+                        value={selectedNode.stepIndex || 1}
+                        onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, stepIndex: parseInt(e.target.value) || 1 } : n))}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <span className="text-[10px] text-slate-500 block mb-1">Fill</span>
+                        <input
+                          type="color"
+                          value={selectedNode.fill || '#1e293b'}
+                          onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, fill: e.target.value } : n))}
+                          className="w-full h-8 bg-transparent rounded cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 block mb-1">Border</span>
+                        <input
+                          type="color"
+                          value={selectedNode.stroke || '#3b82f6'}
+                          onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, stroke: e.target.value } : n))}
+                          className="w-full h-8 bg-transparent rounded cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 block mb-1">Text</span>
+                        <input
+                          type="color"
+                          value={selectedNode.text || '#f8fafc'}
+                          onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, text: e.target.value } : n))}
+                          className="w-full h-8 bg-transparent rounded cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setNodes(nodes.filter(n => n.id !== selectedNode.id))}
+                      className="w-full py-2 rounded-lg bg-rose-500/20 text-rose-300 font-semibold hover:bg-rose-500/30 transition"
+                    >
+                      Delete Block
+                    </button>
+                  </>
+                ) : selectedEdge ? (
+                  <>
+                    <div>
+                      <label className="font-semibold text-slate-400 block mb-1">Line Label</label>
+                      <input
+                        type="text"
+                        value={selectedEdge.label || ''}
+                        onChange={(e) => setEdges(edges.map(ev => ev.id === selectedEdge.id ? { ...ev, label: e.target.value } : ev))}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none"
+                      />
+                    </div>
+                    <button
+                      onClick={() => setEdges(edges.filter(ev => ev.id !== selectedEdge.id))}
+                      className="w-full py-2 rounded-lg bg-rose-500/20 text-rose-300 font-semibold hover:bg-rose-500/30 transition"
+                    >
+                      Delete Connection
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-slate-500 text-center py-6">Select any block or connection line to edit</p>
+                )}
+              </div>
+            </aside>
+          </div>
+
+          {/* PRESENTATION MODAL */}
+          {showPresentation && (
+            <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col justify-between p-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-white">Slide Deck Presentation Mode</h2>
+                <button onClick={() => setShowPresentation(false)} className="px-3 py-1 bg-slate-800 text-white rounded">Close</button>
+              </div>
+              <div className="flex-1 flex items-center justify-center">
+                <p className="text-slate-400 text-xs">Interactive Slide Presentation Walkthrough Ready</p>
+              </div>
+            </div>
+          )}
+
+          {/* EXPORT MODAL */}
+          {showExport && (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
+              <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 relative text-slate-100">
+                <button onClick={() => setShowExport(false)} className="absolute top-4 right-4 text-slate-400">✕</button>
+                <h2 className="text-base font-bold mb-4">Export Options</h2>
+                <div className="space-y-3">
+                  <button
+                    onClick={() => {
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ nodes, edges }));
+                      const dlAnchorElem = document.createElement('a');
+                      dlAnchorElem.setAttribute("href", dataStr);
+                      dlAnchorElem.setAttribute("download", "flowchart.json");
+                      dlAnchorElem.click();
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-blue-600 font-semibold text-xs text-white"
+                  >
+                    Download JSON Project
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TEMPLATES MODAL */}
+          {showTemplates && (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
+              <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 relative">
+                <button onClick={() => setShowTemplates(false)} className="absolute top-4 right-4 text-slate-400">✕</button>
+                <h2 className="text-base font-bold text-white mb-3">Starter Templates</h2>
+                <div className="space-y-2">
+                  {PRESET_TEMPLATES.map(tpl => (
+                    <div
+                      key={tpl.id}
+                      onClick={() => { setNodes(tpl.nodes); setEdges(tpl.edges); setShowTemplates(false); }}
+                      className="p-3 bg-slate-800 hover:bg-slate-700/80 rounded-xl cursor-pointer"
+                    >
+                      <div className="text-xs font-bold text-white">{tpl.name}</div>
+                      <div className="text-[11px] text-slate-400">{tpl.description}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

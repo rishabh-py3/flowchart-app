@@ -62,18 +62,26 @@ function ShapeMiniature({ id }) {
   );
 }
 
-export default function Sidebar({ onAddNode, activeConnectorStyle, setActiveConnectorStyle }) {
+export default function Sidebar({ onAddNode, activeConnectorStyle, setActiveConnectorStyle, onClose }) {
   const handleDragStart = (e, shapeItem) => {
     e.dataTransfer.setData('application/json', JSON.stringify(shapeItem));
     e.dataTransfer.effectAllowed = 'copy';
   };
 
   return (
-    <aside className="w-[248px] bg-[#ede4d3] border-r border-[#d5c7ad] flex flex-col z-20 select-none">
-      <div className="px-5 pt-6 pb-3">
+    <aside className="w-full md:w-[248px] bg-[#ede4d3] border-r border-[#d5c7ad] flex flex-col z-20 select-none">
+      <div className="px-5 pt-5 pb-3 flex items-center justify-between">
         <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#4a3e2e]">
           FLOW SHAPES
         </h2>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="md:hidden p-1 rounded-lg text-[#72634f] hover:bg-[#d8cbb3] transition"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2.5">

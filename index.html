@@ -2,7 +2,7 @@
 <html lang="en" class="h-full">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>FlowCanvas Studio - Flowchart & Process Designer</title>
 
   <!-- Tailwind CSS CDN -->
@@ -33,6 +33,15 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <style>
+    html, body {
+      overscroll-behavior: none;
+      -webkit-touch-callout: none;
+    }
+    .canvas-bg {
+      touch-action: none !important;
+      -webkit-user-select: none;
+      user-select: none;
+    }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: rgba(109, 98, 77, 0.25); border-radius: 4px; }
@@ -801,6 +810,7 @@
       const [zoom, setZoom] = useState(1.0);
       const [pan, setPan] = useState({ x: 0, y: 0 });
       const [activeConnectorStyle, setActiveConnectorStyle] = useState('orthogonal');
+      const [mobileDrawer, setMobileDrawer] = useState(null); // 'shapes' | 'inspector' | null
 
       const [history, setHistory] = useState([{ nodes: PRESET_TEMPLATES[0].nodes, edges: PRESET_TEMPLATES[0].edges }]);
       const [historyIndex, setHistoryIndex] = useState(0);
@@ -821,6 +831,20 @@
       const [connectingFrom, setConnectingFrom] = useState(null);
       const [hoveredPort, setHoveredPort] = useState(null);
       const [mouseCanvasPos, setMouseCanvasPos] = useState({ x: 0, y: 0 });
+
+      // Touch gesture refs
+      const touchStateRef = useRef({
+        isPinching: false,
+        startDist: 0,
+        startZoom: 1,
+        startCenter: { x: 0, y: 0 },
+        startPan: { x: 0, y: 0 },
+        touchStartPos: { x: 0, y: 0 },
+        touchStartTime: 0,
+        hasMoved: false
+      });
+      const draggingTouchNodeRef = useRef(null);
+      const connectingTouchPortRef = useRef(null);
 
       const [editingNodeId, setEditingNodeId] = useState(null);
       const [editingEdgeId, setEditingEdgeId] = useState(null);
@@ -929,6 +953,48 @@
         };
       };
 
+      // Fit and center all nodes nicely into the screen
+      const fitNodesToView = useCallback((customNodes = null) => {
+        const targetNodes = customNodes || nodes;
+        if (!targetNodes || targetNodes.length === 0) return;
+        const container = containerRef.current;
+        const cWidth = container?.clientWidth || window.innerWidth;
+        const cHeight = container?.clientHeight || (window.innerHeight - 68);
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        targetNodes.forEach(n => {
+          minX = Math.min(minX, n.x);
+          minY = Math.min(minY, n.y);
+          maxX = Math.max(maxX, n.x + (n.width || 150));
+          maxY = Math.max(maxY, n.y + (n.height || 76));
+        });
+
+        const diagramWidth = Math.max(120, maxX - minX);
+        const diagramHeight = Math.max(100, maxY - minY);
+        const padding = window.innerWidth < 768 ? 24 : 60;
+
+        const scaleX = (cWidth - padding * 2) / diagramWidth;
+        const scaleY = (cHeight - padding * 2) / diagramHeight;
+        const targetZoom = Math.min(1.0, Math.max(0.3, Math.min(scaleX, scaleY)));
+
+        const centerX = minX + diagramWidth / 2;
+        const centerY = minY + diagramHeight / 2;
+
+        const newPanX = cWidth / 2 - centerX * targetZoom;
+        const newPanY = cHeight / 2 - centerY * targetZoom;
+
+        setZoom(+targetZoom.toFixed(2));
+        setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
+      }, [nodes]);
+
+      // Automatically auto-fit flowchart to screen on first render
+      useEffect(() => {
+        const timer = setTimeout(() => {
+          fitNodesToView();
+        }, 120);
+        return () => clearTimeout(timer);
+      }, []);
+
       const saveInlineLabel = () => {
         if (editingNodeId) {
           handleUpdateNode(editingNodeId, { label: tempLabel });
@@ -940,6 +1006,22 @@
         }
       };
 
+      // Smooth Wheel Zoom & Pan
+      const handleWheel = (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          const delta = -e.deltaY * 0.0015;
+          const nextZoom = Math.min(2.2, Math.max(0.3, +(zoom + delta).toFixed(2)));
+          setZoom(nextZoom);
+        } else {
+          setPan(prev => ({
+            x: prev.x - e.deltaX * 0.6,
+            y: prev.y - e.deltaY * 0.6
+          }));
+        }
+      };
+
+      // Mouse events
       const handleCanvasMouseDown = (e) => {
         if (e.target.tagName === 'svg' || e.target.classList.contains('canvas-bg')) {
           if (editingNodeId || editingEdgeId) saveInlineLabel();
@@ -1002,15 +1084,228 @@
         setConnectingFrom(null);
       };
 
+      // --- MOBILE TOUCH EVENT HANDLERS ---
+      const handleCanvasTouchStart = (e) => {
+        if (editingNodeId || editingEdgeId) saveInlineLabel();
+
+        if (e.touches.length === 1) {
+          const t = e.touches[0];
+          touchStateRef.current = {
+            isPinching: false,
+            startDist: 0,
+            startZoom: zoom,
+            startCenter: { x: t.clientX, y: t.clientY },
+            startPan: { ...pan },
+            touchStartPos: { x: t.clientX, y: t.clientY },
+            touchStartTime: Date.now(),
+            hasMoved: false
+          };
+          setIsPanning(true);
+          setStartPanMouse({ x: t.clientX - pan.x, y: t.clientY - pan.y });
+        } else if (e.touches.length === 2) {
+          setIsPanning(false);
+          const t0 = e.touches[0];
+          const t1 = e.touches[1];
+          const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+          const center = { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
+          touchStateRef.current = {
+            isPinching: true,
+            startDist: dist,
+            startZoom: zoom,
+            startCenter: center,
+            startPan: { ...pan },
+            touchStartPos: center,
+            touchStartTime: Date.now(),
+            hasMoved: true
+          };
+        }
+      };
+
+      const handleCanvasTouchMove = (e) => {
+        if (e.cancelable) e.preventDefault();
+
+        // 1. Touch drag a node
+        if (draggingTouchNodeRef.current && e.touches.length === 1) {
+          const t = e.touches[0];
+          const info = draggingTouchNodeRef.current;
+          const dx = (t.clientX - info.startX) / zoom;
+          const dy = (t.clientY - info.startY) / zoom;
+          if (Math.hypot(dx, dy) > 3) info.hasMoved = true;
+
+          let newX = info.nodeStartX + dx;
+          let newY = info.nodeStartY + dy;
+
+          const currNode = nodes.find(n => n.id === info.nodeId);
+          if (currNode) {
+            const layout = computeAutoNodeLayout(currNode);
+            const newSnapLines = [];
+            const cCenterX = newX + layout.width / 2;
+            const cCenterY = newY + layout.height / 2;
+
+            nodes.forEach(other => {
+              if (other.id === info.nodeId) return;
+              const oLayout = computeAutoNodeLayout(other);
+              const oCenterX = other.x + oLayout.width / 2;
+              const oCenterY = other.y + oLayout.height / 2;
+
+              if (Math.abs(cCenterX - oCenterX) < 8) {
+                newX = oCenterX - layout.width / 2;
+                newSnapLines.push({ type: 'x', x: oCenterX });
+              }
+              if (Math.abs(cCenterY - oCenterY) < 8) {
+                newY = oCenterY - layout.height / 2;
+                newSnapLines.push({ type: 'y', y: oCenterY });
+              }
+            });
+            setSnapLines(newSnapLines);
+          }
+
+          handleUpdateNode(info.nodeId, { x: Math.round(newX), y: Math.round(newY) }, false, true);
+          return;
+        }
+
+        // 2. Touch connecting line
+        if (connectingTouchPortRef.current && e.touches.length === 1) {
+          const t = e.touches[0];
+          const cPos = screenToCanvas(t.clientX, t.clientY);
+          setMouseCanvasPos(cPos);
+          return;
+        }
+
+        // 3. Pinch-to-zoom (2 fingers)
+        if (touchStateRef.current.isPinching && e.touches.length === 2) {
+          const t0 = e.touches[0];
+          const t1 = e.touches[1];
+          const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+          const currCenter = { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
+          const { startDist, startZoom, startCenter, startPan } = touchStateRef.current;
+          if (startDist > 0) {
+            const scale = dist / startDist;
+            const nextZoom = Math.min(2.2, Math.max(0.3, +(startZoom * scale).toFixed(2)));
+            const ratio = nextZoom / startZoom;
+            const nextPanX = currCenter.x - (startCenter.x - startPan.x) * ratio;
+            const nextPanY = currCenter.y - (startCenter.y - startPan.y) * ratio;
+            setZoom(nextZoom);
+            setPan({ x: Math.round(nextPanX), y: Math.round(nextPanY) });
+          }
+          return;
+        }
+
+        // 4. Touch pan canvas (1 finger)
+        if (isPanning && e.touches.length === 1) {
+          const t = e.touches[0];
+          const dx = t.clientX - touchStateRef.current.touchStartPos.x;
+          const dy = t.clientY - touchStateRef.current.touchStartPos.y;
+          if (Math.hypot(dx, dy) > 3) touchStateRef.current.hasMoved = true;
+          setPan({
+            x: touchStateRef.current.startPan.x + dx,
+            y: touchStateRef.current.startPan.y + dy
+          });
+        }
+      };
+
+      const handleCanvasTouchEnd = (e) => {
+        // Drop dragged node
+        if (draggingTouchNodeRef.current) {
+          if (draggingTouchNodeRef.current.hasMoved) {
+            saveSnapshot(nodes, edges);
+          }
+          draggingTouchNodeRef.current = null;
+          setDraggingNodeId(null);
+          setSnapLines([]);
+          return;
+        }
+
+        // Connect port
+        if (connectingTouchPortRef.current) {
+          const fromInfo = connectingTouchPortRef.current;
+          const t = e.changedTouches[0];
+          if (t) {
+            const cPos = screenToCanvas(t.clientX, t.clientY);
+            const target = sizedNodes.find(n =>
+              n.id !== fromInfo.nodeId &&
+              cPos.x >= n.x && cPos.x <= n.x + n.width &&
+              cPos.y >= n.y && cPos.y <= n.y + n.height
+            );
+            if (target) {
+              const sn = sizedNodesMap[fromInfo.nodeId];
+              const pair = getBestPortPair(sn, target, { fromPort: fromInfo.portDir });
+              const newEdge = {
+                id: 'edge_' + Date.now(),
+                from: fromInfo.nodeId,
+                to: target.id,
+                fromPort: fromInfo.portDir,
+                toPort: pair.toDir,
+                label: '',
+                style: activeConnectorStyle || 'orthogonal'
+              };
+              const nextE = [...edges, newEdge];
+              setEdges(nextE);
+              saveSnapshot(nodes, nextE);
+            }
+          }
+          connectingTouchPortRef.current = null;
+          setConnectingFrom(null);
+          return;
+        }
+
+        if (e.touches.length === 0) {
+          if (!touchStateRef.current.hasMoved && (Date.now() - touchStateRef.current.touchStartTime < 300)) {
+            setSelectedNodeIds([]);
+            setSelectedEdgeId(null);
+          }
+          setIsPanning(false);
+          touchStateRef.current.isPinching = false;
+        }
+      };
+
+      const handleNodeTouchStart = (e, node) => {
+        e.stopPropagation();
+        if (editingNodeId && editingNodeId !== node.id) saveInlineLabel();
+        setSelectedEdgeId(null);
+        setSelectedNodeIds([node.id]);
+
+        if (e.touches.length === 1) {
+          const t = e.touches[0];
+          draggingTouchNodeRef.current = {
+            nodeId: node.id,
+            startX: t.clientX,
+            startY: t.clientY,
+            nodeStartX: node.x,
+            nodeStartY: node.y,
+            hasMoved: false
+          };
+          setDraggingNodeId(node.id);
+        }
+      };
+
+      const handlePortTouchStart = (e, node, dir, portPos) => {
+        e.stopPropagation();
+        if (e.touches.length === 1) {
+          connectingTouchPortRef.current = {
+            nodeId: node.id,
+            portDir: dir
+          };
+          setConnectingFrom({ nodeId: node.id, portDir: dir, port: portPos });
+          const t = e.touches[0];
+          const cPos = screenToCanvas(t.clientX, t.clientY);
+          setMouseCanvasPos(cPos);
+        }
+      };
+
       const addNodeFromSidebar = (shapeItem) => {
         const colors = theme.nodeColors[shapeItem.id] || theme.nodeColors.process;
-        const offset = (nodes.length % 6) * 28;
+        const container = containerRef.current;
+        const cWidth = container?.clientWidth || window.innerWidth;
+        const cHeight = container?.clientHeight || (window.innerHeight - 68);
+        const centerCanvas = screenToCanvas(cWidth / 2, cHeight / 2);
+
         const baseNode = {
           id: 'node_' + Date.now(),
           type: shapeItem.id,
           label: shapeItem.name,
-          x: Math.round((340 + offset - pan.x) / zoom),
-          y: Math.round((190 + offset - pan.y) / zoom),
+          x: Math.round(centerCanvas.x - shapeItem.defaultWidth / 2),
+          y: Math.round(centerCanvas.y - shapeItem.defaultHeight / 2),
           width: shapeItem.defaultWidth,
           height: shapeItem.defaultHeight,
           fill: colors.fill,
@@ -1026,6 +1321,7 @@
         handleUpdateNode(newNode.id, newNode, true);
         setSelectedNodeIds([newNode.id]);
         setSelectedEdgeId(null);
+        setMobileDrawer(null);
       };
 
       const handleDrop = (e) => {
@@ -1098,29 +1394,204 @@
           }
         };
         reader.readAsText(file);
-        e.target.value = '';
+      const generateFlowchartSvgString = (padding = 48) => {
+        if (!nodes || nodes.length === 0) {
+          alert('Your canvas is empty. Add flowchart blocks before downloading.');
+          return null;
+        }
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        sizedNodes.forEach(n => {
+          minX = Math.min(minX, n.x);
+          minY = Math.min(minY, n.y);
+          maxX = Math.max(maxX, n.x + n.width);
+          maxY = Math.max(maxY, n.y + n.height);
+        });
+
+        const exportMinX = Math.round(minX - padding);
+        const exportMinY = Math.round(minY - padding);
+        const width = Math.max(200, Math.round(maxX - minX + padding * 2));
+        const height = Math.max(160, Math.round(maxY - minY + padding * 2));
+
+        const edgeColor = theme?.edgeStroke || '#736049';
+        const bgColor = theme?.bgColor || '#f3ede0';
+
+        const escapeXml = (str) =>
+          String(str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+
+        let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${exportMinX} ${exportMinY} ${width} ${height}" width="${width}" height="${height}">`;
+
+        svg += `<defs>
+          <filter id="fc-node-shadow" x="-10%" y="-10%" width="125%" height="125%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(74, 60, 44, 0.12)" />
+          </filter>
+          <marker id="fc-arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+            <polygon points="0 0.5, 8.5 3.5, 0 6.5" fill="${edgeColor}" />
+          </marker>
+        </defs>`;
+
+        // Clean background of the board (no grid dots, no sidebars, no UI)
+        svg += `<rect x="${exportMinX}" y="${exportMinY}" width="${width}" height="${height}" fill="${bgColor}"/>`;
+
+        // Edges / Connections
+        edges.forEach(e => {
+          const sn = sizedNodesMap[e.from];
+          const tn = sizedNodesMap[e.to];
+          if (!sn || !tn) return;
+          const { fromPort, toPort } = getBestPortPair(sn, tn, e);
+          const pathInfo = calculatePathData(fromPort, toPort, e.style || 'orthogonal');
+          const strokeColor = e.stroke || edgeColor;
+
+          svg += `<path d="${pathInfo.d}" fill="none" stroke="${strokeColor}" stroke-width="2" marker-end="url(#fc-arrow)" />`;
+
+          if (e.label) {
+            const isMostlyHoriz = Math.abs(toPort.x - fromPort.x) >= Math.abs(toPort.y - fromPort.y);
+            const lx = pathInfo.midPoint.x + (isMostlyHoriz ? 0 : 18);
+            const ly = pathInfo.midPoint.y + (isMostlyHoriz ? -12 : 0);
+            const labelText = escapeXml(e.label);
+            const labelWidth = Math.max(28, labelText.length * 7 + 12);
+            svg += `<rect x="${lx - labelWidth / 2}" y="${ly - 9}" width="${labelWidth}" height="18" rx="5" fill="${bgColor}" stroke="${strokeColor}" stroke-width="0.8" opacity="0.95"/>`;
+            svg += `<text x="${lx}" y="${ly + 4}" fill="${theme?.textDark ? '#3b3023' : '#2c251d'}" font-size="11" font-family="Inter, -apple-system, sans-serif" font-weight="500" text-anchor="middle">${labelText}</text>`;
+          }
+        });
+
+        // Nodes
+        sizedNodes.forEach(n => {
+          const { x, y, width: nw, height: nh, type, fill, stroke } = n;
+          const st = stroke || '#6d624d';
+          svg += `<g transform="translate(${x}, ${y})">`;
+
+          if (type === 'terminal' || type === 'pill') {
+            const pillRadius = Math.round(Math.min(nw, nh) / 2);
+            svg += `<rect width="${nw}" height="${nh}" rx="${pillRadius}" fill="${fill}" stroke="${st}" stroke-width="1.6" filter="url(#fc-node-shadow)"/>`;
+          } else if (type === 'decision' || type === 'diamond') {
+            svg += `<polygon points="${nw / 2},0 ${nw},${nh / 2} ${nw / 2},${nh} 0,${nh / 2}" stroke-linejoin="round" fill="${fill}" stroke="${st}" stroke-width="1.6" filter="url(#fc-node-shadow)"/>`;
+          } else if (type === 'database' || type === 'cylinder') {
+            const rx = nw / 2;
+            const ry = 10;
+            svg += `<g filter="url(#fc-node-shadow)">`;
+            svg += `<path d="M 0 ${ry} v ${nh - 2 * ry} a ${rx} ${ry} 0 0 0 ${nw} 0 v -${nh - 2 * ry}" fill="${fill}" stroke="${st}" stroke-width="1.6"/>`;
+            svg += `<ellipse cx="${rx}" cy="${ry}" rx="${rx}" ry="${ry}" fill="${fill}" stroke="${st}" stroke-width="1.6"/>`;
+            svg += `</g>`;
+          } else if (type === 'document') {
+            svg += `<path d="M 0 0 H ${nw} V ${nh - 11} Q ${nw * 0.75} ${nh + 2} ${nw * 0.5} ${nh - 9} T 0 ${nh - 11} Z" fill="${fill}" stroke="${st}" stroke-width="1.6" filter="url(#fc-node-shadow)"/>`;
+          } else if (type === 'input' || type === 'parallelogram') {
+            const skew = Math.min(20, nw * 0.15);
+            svg += `<polygon points="${skew},0 ${nw},0 ${nw - skew},${nh} 0,${nh}" stroke-linejoin="round" fill="${fill}" stroke="${st}" stroke-width="1.6" filter="url(#fc-node-shadow)"/>`;
+          } else if (type === 'note') {
+            svg += `<g filter="url(#fc-node-shadow)">`;
+            svg += `<rect width="${nw}" height="${nh}" rx="6" fill="${fill}" stroke="${st}" stroke-width="1.5"/>`;
+            svg += `<polygon points="${nw - 14},${nh} ${nw},${nh - 14} ${nw - 14},${nh - 14}" fill="rgba(90, 70, 45, 0.22)"/>`;
+            svg += `</g>`;
+          } else {
+            svg += `<rect width="${nw}" height="${nh}" rx="10" fill="${fill}" stroke="${st}" stroke-width="1.6" filter="url(#fc-node-shadow)"/>`;
+          }
+
+          const lines = n._lines || [n.label];
+          const lineHeight = n._lineHeight || 18;
+          const fontSize = n.fontSize || 13;
+          const totalTextHeight = lines.length * lineHeight;
+          const startTextY = (nh - totalTextHeight) / 2 + fontSize * 0.82 + (type === 'database' ? 6 : 0) - (type === 'document' ? 4 : 0);
+
+          svg += `<text x="${nw / 2}" fill="${n.text || '#2c251d'}" font-size="${fontSize}" font-family="Inter, -apple-system, sans-serif" text-anchor="middle" font-weight="500">`;
+          lines.forEach((line, i) => {
+            svg += `<tspan x="${nw / 2}" y="${startTextY + i * lineHeight}">${escapeXml(line)}</tspan>`;
+          });
+          svg += `</text>`;
+
+          if (n.stepIndex) {
+            const bx = type === 'decision' ? nw / 2 : type === 'input' ? nw - 10 : nw - 6;
+            svg += `<g transform="translate(${bx}, -4)">
+              <circle r="11" fill="#f6efe0" stroke="#7a6852" stroke-width="1.2"/>
+              <text y="3.8" text-anchor="middle" fill="#3b3023" font-size="11" font-family="Inter, -apple-system, sans-serif" font-weight="600">${n.stepIndex}</text>
+            </g>`;
+          }
+
+          svg += `</g>`;
+        });
+
+        svg += `</svg>`;
+        return { svgStr: svg, width, height };
+      };
+
+      const downloadFlowchartImage = (customFilename = null) => {
+        const result = generateFlowchartSvgString();
+        if (!result) return;
+        const { svgStr, width, height } = result;
+
+        const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const scale = 2; // 2x Retina high sharpness
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(width * scale);
+            canvas.height = Math.round(height * scale);
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.scale(scale, scale);
+              ctx.drawImage(img, 0, 0);
+              const pngUrl = canvas.toDataURL('image/png');
+              const link = document.createElement('a');
+              link.download = customFilename || `flowchart-${Date.now()}.png`;
+              link.href = pngUrl;
+              document.body.appendChild(link);
+              link.click();
+              document.body.removeChild(link);
+            }
+          } catch (err) {
+            const link = document.createElement('a');
+            link.download = `flowchart-${Date.now()}.svg`;
+            link.href = url;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          } finally {
+            URL.revokeObjectURL(url);
+          }
+        };
+
+        img.onerror = () => {
+          const link = document.createElement('a');
+          link.download = `flowchart-${Date.now()}.svg`;
+          link.href = url;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        };
+
+        img.src = url;
       };
 
       return (
         <div className="h-screen w-screen flex flex-col bg-[#f3ede0] overflow-hidden font-sans">
           {/* HEADER */}
-          <header className="h-[68px] bg-[#efe7d6] border-b border-[#d5c7ad] px-6 flex items-center justify-between z-30 select-none shadow-[0_1px_3px_rgba(74,60,44,0.06)]">
-            <div className="flex items-center gap-10">
+          <header className="h-[64px] bg-[#efe7d6] border-b border-[#d5c7ad] px-4 sm:px-6 flex items-center justify-between z-30 select-none shadow-[0_1px_3px_rgba(74,60,44,0.06)]">
+            <div className="flex items-center gap-4 sm:gap-8">
               <div
                 className="flex flex-col items-center cursor-pointer"
-                onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+                onClick={() => fitNodesToView()}
+                title="Click to Center & Fit Flowchart"
               >
-                <span className="text-[22px] font-semibold tracking-tight text-[#433627] leading-none font-serif">
+                <span className="text-[20px] sm:text-[22px] font-semibold tracking-tight text-[#433627] leading-none font-serif">
                   FlowCanvas
                 </span>
-                <div className="flex items-center gap-2 mt-1 w-full justify-center">
+                <div className="flex items-center gap-1.5 mt-0.5 w-full justify-center">
                   <span className="h-[1px] flex-1 bg-[#9c8b70]" />
-                  <span className="text-[9px] font-semibold uppercase tracking-[0.25em] text-[#6d5d47]">STUDIO</span>
+                  <span className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-[0.22em] text-[#6d5d47]">STUDIO</span>
                   <span className="h-[1px] flex-1 bg-[#9c8b70]" />
                 </div>
               </div>
 
-              <nav className="flex items-center gap-6 text-[13px] font-medium text-[#4a3e2e]">
+              {/* Desktop Nav */}
+              <nav className="hidden md:flex items-center gap-5 text-[13px] font-medium text-[#4a3e2e]">
                 <button onClick={() => setShowTemplates(true)} className="hover:text-[#7c5d3b] transition-colors py-1 px-2 rounded-md hover:bg-[#e5dac5]/60">
                   Templates & Presets
                 </button>
@@ -1133,54 +1604,131 @@
                 <button onClick={() => setShowExport(true)} className="hover:text-[#7c5d3b] transition-colors py-1 px-2 rounded-md hover:bg-[#e5dac5]/60">
                   Export
                 </button>
+                <span className="h-3.5 w-[1px] bg-[#d5c7ad]" />
+                <button
+                  onClick={() => downloadFlowchartImage()}
+                  className="flex items-center gap-1.5 py-1.5 px-3 rounded-lg bg-[#5e4933] hover:bg-[#4b3a27] text-[#fdfaf3] font-semibold transition shadow-xs text-xs"
+                  title="Download picture of flowchart (PNG)"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  <span>Download</span>
+                </button>
               </nav>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* Mobile Quick Add Shapes Button */}
+              <button
+                onClick={() => setMobileDrawer('shapes')}
+                className="md:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#7c6143] text-[#fdfaf3] text-xs font-semibold shadow-sm hover:bg-[#695136] active:scale-95 transition"
+              >
+                <span className="text-sm leading-none">+</span>
+                <span>Shapes</span>
+              </button>
+
+              {/* Mobile Quick Download Button */}
+              <button
+                onClick={() => downloadFlowchartImage()}
+                className="md:hidden flex items-center justify-center p-2 rounded-lg bg-[#5e4933] text-[#fdfaf3] shadow-sm active:scale-95 transition"
+                title="Download Flowchart Image"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </button>
+
+              {/* Undo / Redo / Zoom on Desktop */}
               <div className="hidden md:flex items-center gap-1 bg-[#e6dcc8]/80 px-2 py-1 rounded-lg border border-[#d2c3a8] text-[#544634] text-xs">
                 <button onClick={handleUndo} disabled={historyIndex <= 0} className="px-1.5 py-0.5 rounded hover:bg-[#dcd0b8] disabled:opacity-30" title="Undo">↶</button>
                 <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="px-1.5 py-0.5 rounded hover:bg-[#dcd0b8] disabled:opacity-30" title="Redo">↷</button>
                 <span className="h-3.5 w-[1px] bg-[#cbbba0] mx-1" />
-                <button onClick={() => setZoom(Math.max(0.35, +(zoom - 0.1).toFixed(2)))} className="px-1.5 rounded hover:bg-[#dcd0b8]">-</button>
-                <span onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="font-mono text-[11px] w-11 text-center cursor-pointer">{Math.round(zoom * 100)}%</span>
+                <button onClick={() => setZoom(Math.max(0.3, +(zoom - 0.1).toFixed(2)))} className="px-1.5 rounded hover:bg-[#dcd0b8]">-</button>
+                <span onClick={() => fitNodesToView()} className="font-mono text-[11px] w-12 text-center cursor-pointer hover:underline" title="Click to auto-fit screen">{Math.round(zoom * 100)}%</span>
                 <button onClick={() => setZoom(Math.min(2.2, +(zoom + 0.1).toFixed(2)))} className="px-1.5 rounded hover:bg-[#dcd0b8]">+</button>
               </div>
 
+              {/* Present Flow */}
               <button
                 onClick={() => { setPresStepIdx(0); setShowPresentation(true); }}
                 disabled={nodes.length === 0}
-                className="px-5 py-2 rounded-lg bg-[#7c6143] hover:bg-[#695136] disabled:opacity-40 text-[#fdfaf3] font-medium text-[13px] shadow-sm transition-all border border-[#634c33]"
+                className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-[#7c6143] hover:bg-[#695136] active:scale-95 disabled:opacity-40 text-[#fdfaf3] font-medium text-xs sm:text-[13px] shadow-sm transition border border-[#634c33]"
               >
-                Present Flow
+                Present
               </button>
 
+              {/* Menu Button */}
               <div className="relative">
-                <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 rounded-lg text-[#5c4d3a] hover:bg-[#e4d9c3] transition">
+                <button onClick={() => setMenuOpen(!menuOpen)} className="p-1.5 sm:p-2 rounded-lg text-[#5c4d3a] hover:bg-[#e4d9c3] transition">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
                 </button>
                 {menuOpen && (
-                  <div className="absolute right-0 mt-2 w-52 rounded-xl bg-[#f5efe2] border border-[#cfc0a5] shadow-xl py-2 px-3 z-50 text-xs text-[#3d3225] space-y-1.5">
-                    <div className="font-semibold text-[10px] uppercase tracking-wider text-[#7d6c55] px-1">Theme</div>
-                    {PRESENTATION_THEMES.map(t => (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+                    <div className="absolute right-0 mt-2 w-56 rounded-xl bg-[#f5efe2] border border-[#cfc0a5] shadow-2xl py-2 px-3 z-50 text-xs text-[#3d3225] space-y-1.5">
+                      {/* Mobile Only Nav items in dropdown */}
+                      <div className="md:hidden border-b border-[#d8cbb3] pb-1.5 space-y-1">
+                        <button
+                          onClick={() => { setShowTemplates(true); setMenuOpen(false); }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium"
+                        >
+                          Templates & Presets
+                        </button>
+                        <button
+                          onClick={() => { fileInputRef.current?.click(); setMenuOpen(false); }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium"
+                        >
+                          Import Flowchart JSON
+                        </button>
+                        <button
+                          onClick={() => { setShowExport(true); setMenuOpen(false); }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium"
+                        >
+                          Export Diagram
+                        </button>
+                        <button
+                          onClick={() => { downloadFlowchartImage(); setMenuOpen(false); }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium flex items-center gap-2 text-[#2c251d]"
+                        >
+                          <svg className="w-3.5 h-3.5 text-[#7c6143]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          <span>Download Picture (PNG)</span>
+                        </button>
+                      </div>
+
                       <button
-                        key={t.id}
-                        onClick={() => { setTheme(t); setMenuOpen(false); }}
-                        className={`w-full text-left px-2.5 py-1.5 rounded-lg ${theme.id === t.id ? 'bg-[#7c6143] text-[#fdfaf3]' : 'hover:bg-[#e6dcc8]'}`}
+                        onClick={() => { fitNodesToView(); setMenuOpen(false); }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium flex items-center justify-between"
                       >
-                        {t.name}
+                        <span>Center & Fit Flowchart</span>
+                        <span className="text-[11px] opacity-70">⛶</span>
                       </button>
-                    ))}
-                    <div className="border-t border-[#d8cbb3] pt-1.5">
-                      <button
-                        onClick={() => { setNodes([]); setEdges([]); saveSnapshot([], []); setMenuOpen(false); }}
-                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-500/15 text-rose-700 font-medium"
-                      >
-                        Clear Canvas
-                      </button>
+
+                      <div className="font-semibold text-[10px] uppercase tracking-wider text-[#7d6c55] px-1 pt-1">Theme</div>
+                      {PRESENTATION_THEMES.map(t => (
+                        <button
+                          key={t.id}
+                          onClick={() => { setTheme(t); setMenuOpen(false); }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg ${theme.id === t.id ? 'bg-[#7c6143] text-[#fdfaf3]' : 'hover:bg-[#e6dcc8]'}`}
+                        >
+                          {t.name}
+                        </button>
+                      ))}
+
+                      <div className="border-t border-[#d8cbb3] pt-1.5">
+                        <button
+                          onClick={() => { setNodes([]); setEdges([]); saveSnapshot([], []); setMenuOpen(false); }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-500/15 text-rose-700 font-medium"
+                        >
+                          Clear Canvas
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             </div>
@@ -1188,8 +1736,8 @@
 
           {/* MAIN WORKSPACE */}
           <div className="flex-1 flex overflow-hidden relative">
-            {/* LEFT SIDEBAR */}
-            <aside className="w-[248px] bg-[#ede4d3] border-r border-[#d5c7ad] flex flex-col z-20 select-none">
+            {/* LEFT SIDEBAR (Desktop) */}
+            <aside className="hidden md:flex w-[248px] bg-[#ede4d3] border-r border-[#d5c7ad] flex-col z-20 select-none">
               <div className="px-5 pt-6 pb-3">
                 <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#4a3e2e]">FLOW SHAPES</h2>
               </div>
@@ -1236,14 +1784,20 @@
             {/* CENTER CANVAS */}
             <div
               ref={containerRef}
+              onWheel={handleWheel}
               onMouseDown={handleCanvasMouseDown}
               onMouseMove={handleCanvasMouseMove}
               onMouseUp={handleCanvasMouseUp}
+              onTouchStart={handleCanvasTouchStart}
+              onTouchMove={handleCanvasTouchMove}
+              onTouchEnd={handleCanvasTouchEnd}
+              onTouchCancel={handleCanvasTouchEnd}
               onDrop={handleDrop}
               onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+              style={{ touchAction: 'none' }}
               className={`relative flex-1 h-full w-full overflow-hidden select-none cursor-default canvas-bg ${theme.canvasBgClass}`}
             >
-              <svg className="w-full h-full absolute inset-0 pointer-events-none">
+              <svg className="w-full h-full absolute inset-0 pointer-events-none" style={{ touchAction: 'none' }}>
                 <defs>
                   <marker id="arrowhead-end" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
                     <polygon points="0 0.5, 8.5 3.5, 0 6.5" fill={defaultEdgeColor} />
@@ -1280,7 +1834,7 @@
                           d={pathInfo.d}
                           fill="none"
                           stroke="transparent"
-                          strokeWidth="16"
+                          strokeWidth="24"
                           onClick={(e) => { e.stopPropagation(); setSelectedEdgeId(edge.id); setSelectedNodeIds([]); }}
                           onDoubleClick={(e) => { e.stopPropagation(); setEditingEdgeId(edge.id); setTempLabel(edge.label || ''); }}
                         />
@@ -1341,6 +1895,7 @@
                       <g
                         key={node.id}
                         transform={`translate(${node.x}, ${node.y})`}
+                        style={{ touchAction: 'none' }}
                         onMouseDown={(e) => {
                           e.stopPropagation();
                           if (editingNodeId && editingNodeId !== node.id) saveInlineLabel();
@@ -1350,6 +1905,7 @@
                           setDraggingNodeId(node.id);
                           setDragOffset({ x: cPos.x - node.x, y: cPos.y - node.y });
                         }}
+                        onTouchStart={(e) => handleNodeTouchStart(e, node)}
                         onMouseUp={(e) => {
                           if (connectingFrom && connectingFrom.nodeId !== node.id) {
                             e.stopPropagation();
@@ -1433,12 +1989,13 @@
                               <circle
                                 cx={lx}
                                 cy={ly}
-                                r="12"
+                                r="16"
                                 fill="transparent"
                                 onMouseDown={(e) => {
                                   e.stopPropagation();
                                   setConnectingFrom({ nodeId: node.id, portDir: dir, port: ports[dir] });
                                 }}
+                                onTouchStart={(e) => handlePortTouchStart(e, node, dir, ports[dir])}
                                 onMouseUp={(e) => {
                                   e.stopPropagation();
                                   if (connectingFrom && connectingFrom.nodeId !== node.id) {
@@ -1457,16 +2014,16 @@
                                   }
                                   setConnectingFrom(null);
                                 }}
-                                className="cursor-crosshair"
+                                className="cursor-crosshair pointer-events-auto"
                               />
                               <circle
                                 cx={lx}
                                 cy={ly}
-                                r="5"
+                                r="5.5"
                                 fill="#f6efe0"
                                 stroke="#6d5d47"
                                 strokeWidth="1.8"
-                                className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="pointer-events-none opacity-60 md:opacity-0 group-hover:opacity-100 transition-opacity"
                               />
                             </g>
                           );
@@ -1476,10 +2033,92 @@
                   })}
                 </g>
               </svg>
+
+              {/* FLOATING CONTROLS (Bottom Right) */}
+              <div className="absolute bottom-4 right-4 z-30 flex items-center gap-1.5 bg-[#ede4d3]/95 backdrop-blur-xs border border-[#cfc0a5] shadow-lg rounded-xl p-1 text-[#4a3e2e]">
+                <button
+                  onClick={handleUndo}
+                  disabled={historyIndex <= 0}
+                  className="p-2 rounded-lg hover:bg-[#ded2bc] disabled:opacity-30 transition"
+                  title="Undo"
+                >
+                  <span className="text-sm font-bold">↶</span>
+                </button>
+                <button
+                  onClick={handleRedo}
+                  disabled={historyIndex >= history.length - 1}
+                  className="p-2 rounded-lg hover:bg-[#ded2bc] disabled:opacity-30 transition"
+                  title="Redo"
+                >
+                  <span className="text-sm font-bold">↷</span>
+                </button>
+                <span className="h-4 w-[1px] bg-[#cfc0a5] mx-0.5" />
+                <button
+                  onClick={() => setZoom(Math.max(0.3, +(zoom - 0.1).toFixed(2)))}
+                  className="p-2 rounded-lg hover:bg-[#ded2bc] transition"
+                  title="Zoom Out"
+                >
+                  <span className="text-sm font-bold">−</span>
+                </button>
+                <button
+                  onClick={() => fitNodesToView()}
+                  className="px-2 py-1 rounded-lg hover:bg-[#ded2bc] font-mono text-xs font-semibold transition"
+                  title="Center & Fit Flowchart"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+                <button
+                  onClick={() => setZoom(Math.min(2.2, +(zoom + 0.1).toFixed(2)))}
+                  className="p-2 rounded-lg hover:bg-[#ded2bc] transition"
+                  title="Zoom In"
+                >
+                  <span className="text-sm font-bold">+</span>
+                </button>
+                <span className="h-4 w-[1px] bg-[#cfc0a5] mx-0.5" />
+                <button
+                  onClick={() => downloadFlowchartImage()}
+                  className="p-2 rounded-lg hover:bg-[#ded2bc] text-[#5c442d] transition"
+                  title="Download picture of flowchart (PNG)"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* MOBILE FLOATING ACTION PILL (When item selected) */}
+              {(selectedNode || selectedEdge) && (
+                <div className="md:hidden fixed bottom-18 left-1/2 -translate-x/1/2 z-40 bg-[#f5efe2] border border-[#cfc0a5] shadow-2xl rounded-full px-3.5 py-2 flex items-center gap-2.5 text-xs text-[#2c251d]">
+                  <span className="font-semibold max-w-[120px] truncate text-[#4a3e2e]">
+                    {selectedNode ? selectedNode.label : (selectedEdge.label || 'Connection')}
+                  </span>
+                  <button
+                    onClick={() => setMobileDrawer('inspector')}
+                    className="px-2.5 py-1 rounded-lg bg-[#7c6143] text-[#fdfaf3] font-medium"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (selectedNode) handleDeleteNode(selectedNode.id);
+                      if (selectedEdge) handleDeleteEdge(selectedEdge.id);
+                    }}
+                    className="p-1 text-rose-700 font-bold"
+                  >
+                    🗑
+                  </button>
+                  <button
+                    onClick={() => { setSelectedNodeIds([]); setSelectedEdgeId(null); }}
+                    className="p-1 text-[#72634f]"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* RIGHT INSPECTOR */}
-            <aside className="w-[272px] bg-[#ede4d3] border-l border-[#d5c7ad] flex flex-col z-20 select-none overflow-y-auto">
+            {/* RIGHT INSPECTOR (Desktop) */}
+            <aside className="hidden md:flex w-[272px] bg-[#ede4d3] border-l border-[#d5c7ad] flex-col z-20 select-none overflow-y-auto">
               <div className="px-6 pt-6 pb-3 flex items-center justify-between">
                 <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#4a3e2e]">INSPECTOR</h2>
               </div>
@@ -1595,6 +2234,170 @@
             </aside>
           </div>
 
+          {/* MOBILE DRAWER: SHAPES */}
+          {mobileDrawer === 'shapes' && (
+            <div className="fixed inset-0 z-50 md:hidden bg-black/45 backdrop-blur-xs flex flex-col justify-end">
+              <div className="fixed inset-0" onClick={() => setMobileDrawer(null)} />
+              <div className="relative bg-[#ede4d3] border-t border-[#d5c7ad] rounded-t-2xl max-h-[80vh] flex flex-col shadow-2xl p-4">
+                <div className="flex items-center justify-between pb-3 border-b border-[#d5c7ad]">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#7c6143]"></span>
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-[#4a3e2e]">Add Flow Shape</h2>
+                  </div>
+                  <button onClick={() => setMobileDrawer(null)} className="p-1 rounded-lg text-[#72634f] hover:bg-[#d8cbb3]">✕</button>
+                </div>
+                <div className="flex-1 overflow-y-auto py-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {SHAPE_TYPES.map(shape => (
+                      <div
+                        key={shape.id}
+                        onClick={() => addNodeFromSidebar(shape)}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl bg-[#f3ecde] border border-[#d6c8b0] active:scale-98 transition shadow-xs cursor-pointer"
+                      >
+                        <ShapeMiniature id={shape.id} />
+                        <span className="text-xs font-medium text-[#3b3023] leading-tight">{shape.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="pt-3 border-t border-[#d8cbb3]">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[#6d5d47] mb-1.5">Default Flow Line Style</h3>
+                    <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#e3d8c3] rounded-xl border border-[#cfc0a5]">
+                      {[
+                        { id: 'orthogonal', label: 'Step' },
+                        { id: 'curved', label: 'Curve' },
+                        { id: 'straight', label: 'Direct' }
+                      ].map(st => (
+                        <button
+                          key={st.id}
+                          onClick={() => setActiveConnectorStyle(st.id)}
+                          className={`py-1.5 rounded-lg text-[11px] font-medium transition ${
+                            activeConnectorStyle === st.id ? 'bg-[#7c6143] text-[#fdfaf3]' : 'text-[#5c4d3a]'
+                          }`}
+                        >
+                          {st.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MOBILE DRAWER: INSPECTOR */}
+          {mobileDrawer === 'inspector' && (
+            <div className="fixed inset-0 z-50 md:hidden bg-black/45 backdrop-blur-xs flex flex-col justify-end">
+              <div className="fixed inset-0" onClick={() => setMobileDrawer(null)} />
+              <div className="relative bg-[#ede4d3] border-t border-[#d5c7ad] rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl p-4">
+                <div className="flex items-center justify-between pb-3 border-b border-[#d5c7ad]">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#7c6143]"></span>
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-[#4a3e2e]">
+                      {selectedNode ? 'Edit Block' : 'Edit Connection'}
+                    </h2>
+                  </div>
+                  <button onClick={() => setMobileDrawer(null)} className="p-1 rounded-lg text-[#72634f] hover:bg-[#d8cbb3]">✕</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto py-3 space-y-3.5 text-xs text-[#3b3023]">
+                  {selectedNode && (
+                    <>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] flex justify-between mb-1">
+                          <span>Block Text</span>
+                          <span className="text-[10px] font-normal text-[#87755d]">Auto-fits box</span>
+                        </label>
+                        <textarea
+                          value={selectedNode.label}
+                          onChange={(e) => handleUpdateNode(selectedNode.id, { label: e.target.value })}
+                          rows={2}
+                          className="w-full bg-[#f6f1e6] border border-[#cfc0a5] rounded-xl p-2.5 text-[#2c251d] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1">Step Badge Number</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={selectedNode.stepIndex || 1}
+                          onChange={(e) => handleUpdateNode(selectedNode.id, { stepIndex: parseInt(e.target.value) || 1 })}
+                          className="w-full bg-[#f6f1e6] border border-[#cfc0a5] rounded-xl p-2 text-[#2c251d] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1">Block Shape</label>
+                        <select
+                          value={selectedNode.type}
+                          onChange={(e) => handleUpdateNode(selectedNode.id, { type: e.target.value })}
+                          className="w-full bg-[#f6f1e6] border border-[#cfc0a5] rounded-xl p-2 text-[#2c251d] outline-none"
+                        >
+                          {SHAPE_TYPES.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1.5">Color Palette</label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {COLOR_PRESETS.map((p, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => handleUpdateNode(selectedNode.id, { fill: p.fill, stroke: p.stroke, text: p.text })}
+                              className="h-8 rounded-lg border border-[#b5a489] flex items-center justify-center"
+                              style={{ backgroundColor: p.fill }}
+                            >
+                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.stroke }} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { handleDeleteNode(selectedNode.id); setMobileDrawer(null); }}
+                        className="w-full py-2.5 rounded-xl bg-[#a14538]/15 text-[#8f3529] font-semibold hover:bg-[#a14538]/25 transition border border-[#a14538]/30"
+                      >
+                        Delete Block
+                      </button>
+                    </>
+                  )}
+
+                  {selectedEdge && (
+                    <>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1">Connection Label</label>
+                        <input
+                          type="text"
+                          value={selectedEdge.label || ''}
+                          onChange={(e) => handleUpdateEdge(selectedEdge.id, { label: e.target.value })}
+                          className="w-full bg-[#f6f1e6] border border-[#cfc0a5] rounded-xl p-2.5 text-[#2c251d] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1">Flow Line Style</label>
+                        <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#e3d8c3] rounded-xl border border-[#cfc0a5]">
+                          {['orthogonal', 'curved', 'straight'].map(st => (
+                            <button
+                              key={st}
+                              onClick={() => handleUpdateEdge(selectedEdge.id, { style: st })}
+                              className={`p-1.5 rounded-lg capitalize ${
+                                (selectedEdge.style || 'orthogonal') === st ? 'bg-[#7c6143] text-[#fdfaf3]' : 'text-[#5c4d3a]'
+                              }`}
+                            >
+                              {st === 'orthogonal' ? 'Step' : st}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { handleDeleteEdge(selectedEdge.id); setMobileDrawer(null); }}
+                        className="w-full py-2.5 rounded-xl bg-[#a14538]/15 text-[#8f3529] font-semibold hover:bg-[#a14538]/25 transition border border-[#a14538]/30"
+                      >
+                        Delete Connection
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TEMPLATES MODAL */}
           {showTemplates && (
             <div className="fixed inset-0 z-50 bg-[#2c251d]/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1615,6 +2418,7 @@
                         setEdges(tpl.edges);
                         saveSnapshot(fitted, tpl.edges);
                         setShowTemplates(false);
+                        setTimeout(() => fitNodesToView(fitted), 80);
                       }}
                       className="p-3.5 bg-[#ede4d3] hover:bg-[#e5d9c3] border border-[#cfc0a5] rounded-xl cursor-pointer transition"
                     >
@@ -1632,9 +2436,49 @@
             <div className="fixed inset-0 z-50 bg-[#2c251d]/60 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="w-full max-w-md bg-[#f5efe2] border border-[#cfc0a5] rounded-2xl p-6 relative text-[#2c251d] shadow-2xl">
                 <button onClick={() => setShowExport(false)} className="absolute top-4 right-4 text-[#72634f] hover:text-[#2c251d]">✕</button>
-                <h2 className="text-base font-bold mb-1">Export Flowchart</h2>
-                <p className="text-xs text-[#72634f] mb-4">Download your flowchart project</p>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-[#7c6143]/15 text-[#7c6143] flex items-center justify-center border border-[#7c6143]/30">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold mb-0.5">Export Flowchart</h2>
+                    <p className="text-xs text-[#72634f]">Save or download your diagram</p>
+                  </div>
+                </div>
                 <div className="space-y-2.5">
+                  <button
+                    onClick={() => { downloadFlowchartImage(); setShowExport(false); }}
+                    className="w-full p-3 rounded-xl bg-[#7c6143] hover:bg-[#695136] font-semibold text-xs text-[#fdfaf3] shadow flex items-center justify-between"
+                  >
+                    <div className="text-left">
+                      <div>Download Picture of Flowchart (PNG)</div>
+                      <div className="text-[10px] font-normal opacity-85">Shows only flowchart with clean padding & 2x sharpness</div>
+                    </div>
+                    <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-md uppercase tracking-wider">Image</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      const result = generateFlowchartSvgString();
+                      if (!result) return;
+                      const blob = new Blob([result.svgStr], { type: 'image/svg+xml;charset=utf-8' });
+                      const a = document.createElement('a');
+                      a.href = URL.createObjectURL(blob);
+                      a.download = `flowcanvas-${Date.now()}.svg`;
+                      a.click();
+                      setShowExport(false);
+                    }}
+                    className="w-full p-3 rounded-xl bg-[#ede4d3] hover:bg-[#e3d7c1] border border-[#cfc0a5] font-semibold text-xs text-[#2c251d] flex items-center justify-between"
+                  >
+                    <div className="text-left">
+                      <div>Download Vector SVG</div>
+                      <div className="text-[10px] font-normal text-[#72634f]">Crisp lossless vector format</div>
+                    </div>
+                    <span className="text-[10px] bg-[#d5c7ad] px-2 py-0.5 rounded-md">Vector</span>
+                  </button>
+
                   <button
                     onClick={() => {
                       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ version: '1.0', theme: theme.id, nodes, edges }, null, 2));
@@ -1642,10 +2486,15 @@
                       a.setAttribute("href", dataStr);
                       a.setAttribute("download", `flowcanvas-${Date.now()}.json`);
                       a.click();
+                      setShowExport(false);
                     }}
-                    className="w-full py-3 rounded-xl bg-[#7c6143] hover:bg-[#695136] font-semibold text-xs text-[#fdfaf3] shadow"
+                    className="w-full p-3 rounded-xl bg-[#ede4d3] hover:bg-[#e3d7c1] border border-[#cfc0a5] font-semibold text-xs text-[#2c251d] flex items-center justify-between"
                   >
-                    Download Editable JSON Project
+                    <div className="text-left">
+                      <div>Download Editable JSON Project</div>
+                      <div className="text-[10px] font-normal text-[#72634f]">Can be re-imported anytime</div>
+                    </div>
+                    <span className="text-[10px] bg-[#d5c7ad] px-2 py-0.5 rounded-md">JSON</span>
                   </button>
                 </div>
               </div>
@@ -1654,12 +2503,12 @@
 
           {/* PRESENTATION MODAL */}
           {showPresentation && (
-            <div className="fixed inset-0 z-50 bg-[#231d16]/95 flex flex-col justify-between p-6">
+            <div className="fixed inset-0 z-50 bg-[#231d16]/95 flex flex-col justify-between p-3 sm:p-6 select-none">
               <div className="flex items-center justify-between text-[#f6efe0]">
-                <h2 className="text-sm font-bold">FlowCanvas Presentation Mode (Step {presStepIdx + 1} of {sizedNodes.length})</h2>
-                <button onClick={() => setShowPresentation(false)} className="px-3.5 py-1.5 bg-[#3a3024] text-[#e6dcc8] rounded-xl text-xs">Exit</button>
+                <h2 className="text-xs sm:text-sm font-bold truncate max-w-[70vw]">FlowCanvas Presentation (Step {presStepIdx + 1} of {sizedNodes.length})</h2>
+                <button onClick={() => setShowPresentation(false)} className="px-3 py-1.5 bg-[#3a3024] text-[#e6dcc8] rounded-xl text-xs font-semibold">Exit</button>
               </div>
-              <div className={`flex-1 my-4 rounded-2xl border border-[#cfc0a5] overflow-hidden flex items-center justify-center ${theme.canvasBgClass}`}>
+              <div className={`flex-1 my-3 sm:my-4 rounded-2xl border border-[#cfc0a5] overflow-hidden flex items-center justify-center ${theme.canvasBgClass}`}>
                 <svg className="w-full h-full" viewBox="0 0 1250 560" preserveAspectRatio="xMidYMid meet">
                   {edges.map(edge => {
                     const sn = sizedNodesMap[edge.from];
@@ -1687,11 +2536,11 @@
                   })}
                 </svg>
               </div>
-              <div className="flex items-center justify-between bg-[#efe7d6] border border-[#cfc0a5] rounded-2xl px-6 py-3">
+              <div className="flex items-center justify-between bg-[#efe7d6] border border-[#cfc0a5] rounded-xl sm:rounded-2xl px-4 sm:px-6 py-2.5 sm:py-3">
                 <button onClick={() => setPresStepIdx(0)} className="px-3 py-1.5 rounded-xl bg-[#e3d8c3] text-xs font-medium">Restart</button>
                 <div className="flex gap-2">
-                  <button onClick={() => setPresStepIdx(p => Math.max(0, p - 1))} disabled={presStepIdx === 0} className="px-4 py-1.5 rounded-xl bg-[#e3d8c3] disabled:opacity-40 text-xs font-medium">Previous</button>
-                  <button onClick={() => setPresStepIdx(p => Math.min(sizedNodes.length - 1, p + 1))} disabled={presStepIdx === sizedNodes.length - 1} className="px-5 py-1.5 rounded-xl bg-[#7c6143] text-[#fdfaf3] disabled:opacity-40 text-xs font-semibold">Next Step</button>
+                  <button onClick={() => setPresStepIdx(p => Math.max(0, p - 1))} disabled={presStepIdx === 0} className="px-3.5 sm:px-4 py-1.5 rounded-xl bg-[#e3d8c3] disabled:opacity-40 text-xs font-medium">Previous</button>
+                  <button onClick={() => setPresStepIdx(p => Math.min(sizedNodes.length - 1, p + 1))} disabled={presStepIdx === sizedNodes.length - 1} className="px-4 sm:px-5 py-1.5 rounded-xl bg-[#7c6143] text-[#fdfaf3] disabled:opacity-40 text-xs font-semibold">Next Step</button>
                 </div>
               </div>
             </div>

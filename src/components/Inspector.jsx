@@ -23,16 +23,24 @@ export default function Inspector({
   onUpdateEdge,
   onDeleteNode,
   onDeleteEdge,
-  onDuplicateNode
+  onDuplicateNode,
+  onClose
 }) {
   return (
-    <aside className="w-[272px] bg-[#ede4d3] border-l border-[#d5c7ad] flex flex-col z-20 select-none overflow-y-auto">
-      <div className="px-6 pt-6 pb-3 flex items-center justify-between">
+    <aside className="w-full md:w-[272px] bg-[#ede4d3] border-l border-[#d5c7ad] flex flex-col z-20 select-none overflow-y-auto">
+      <div className="px-6 pt-5 pb-3 flex items-center justify-between">
         <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#4a3e2e]">
           INSPECTOR
         </h2>
-        {(selectedNode || selectedEdge) && (
-          <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1">
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="md:hidden p-1.5 rounded-lg text-[#72634f] hover:bg-[#ded2bc] transition"
+            >
+              ✕
+            </button>
+          )}
             {selectedNode && onDuplicateNode && (
               <button
                 onClick={() => onDuplicateNode(selectedNode)}

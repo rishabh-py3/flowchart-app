@@ -8,6 +8,7 @@ import ExportModal from './components/ExportModal';
 import TemplateModal from './components/TemplateModal';
 import { PRESENTATION_THEMES, PRESET_TEMPLATES } from './utils/templates';
 import { computeAutoNodeLayout } from './utils/geometry';
+import { downloadFlowchartImage } from './utils/exportImage';
 
 const DEFAULT_TEMPLATE = PRESET_TEMPLATES[0];
 
@@ -71,6 +72,7 @@ export default function App() {
   const [showPresentation, setShowPresentation] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [mobileDrawer, setMobileDrawer] = useState(null); // 'shapes' | 'inspector' | null
 
   // Ensure all user storage is wiped on startup and immediately when exiting/closing the website
   useEffect(() => {
@@ -250,21 +252,74 @@ export default function App() {
     }
   };
 
+  // Fit and center all nodes nicely into the screen
+  const fitNodesToView = useCallback((customNodes = null) => {
+    const targetNodes = customNodes || nodes;
+    if (!targetNodes || targetNodes.length === 0) return;
+    const cWidth = window.innerWidth;
+    const cHeight = window.innerHeight - 64;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    targetNodes.forEach(n => {
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + (n.width || 150));
+      maxY = Math.max(maxY, n.y + (n.height || 76));
+    });
+
+    const diagramWidth = Math.max(120, maxX - minX);
+    const diagramHeight = Math.max(100, maxY - minY);
+    const padding = window.innerWidth < 768 ? 24 : 60;
+
+    const scaleX = (cWidth - padding * 2) / diagramWidth;
+    const scaleY = (cHeight - padding * 2) / diagramHeight;
+    const targetZoom = Math.min(1.0, Math.max(0.3, Math.min(scaleX, scaleY)));
+
+    const centerX = minX + diagramWidth / 2;
+    const centerY = minY + diagramHeight / 2;
+
+    const newPanX = cWidth / 2 - centerX * targetZoom;
+    const newPanY = cHeight / 2 - centerY * targetZoom;
+
+    setZoom(+targetZoom.toFixed(2));
+    setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
+  }, [nodes]);
+
+  // Automatically auto-fit flowchart to screen on first render
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fitNodesToView();
+    }, 120);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Re-fit on screen resize for mobile
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 768) {
+        fitNodesToView();
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [fitNodesToView]);
+
   const handleResetView = () => {
-    setZoom(1.0);
-    setPan({ x: 0, y: 0 });
+    fitNodesToView();
   };
 
   // Add node from Sidebar click
   const handleAddNodeFromSidebar = (shapeItem) => {
     const themeColors = theme.nodeColors[shapeItem.id] || theme.nodeColors.process;
-    const offset = (nodes.length % 6) * 28;
+    setMobileDrawer(null);
+    const centerX = (window.innerWidth / 2 - pan.x) / zoom;
+    const centerY = ((window.innerHeight - 64) / 2 - pan.y) / zoom;
     const baseNode = {
       id: 'node_' + Date.now(),
       type: shapeItem.id,
       label: shapeItem.name,
-      x: Math.round((340 + offset - pan.x) / zoom),
-      y: Math.round((190 + offset - pan.y) / zoom),
+      x: Math.round(centerX - (shapeItem.defaultWidth || 150) / 2),
+      y: Math.round(centerY - (shapeItem.defaultHeight || 76) / 2),
       width: shapeItem.defaultWidth,
       height: shapeItem.defaultHeight,
       fill: themeColors.fill,
@@ -293,9 +348,8 @@ export default function App() {
     setEdges(tpl.edges);
     setSelectedNodeIds([]);
     setSelectedEdgeId(null);
-    setPan({ x: 0, y: 0 });
-    setZoom(1.0);
     saveSnapshot(fittedNodes, tpl.edges);
+    setTimeout(() => fitNodesToView(fittedNodes), 80);
   };
 
   // Import JSON Project
@@ -314,10 +368,15 @@ export default function App() {
     setSelectedNodeIds([]);
     setSelectedEdgeId(null);
     saveSnapshot(importedNodes, importedEdges);
+    setTimeout(() => fitNodesToView(importedNodes), 80);
   };
 
   const selectedNode = nodes.find(n => n.id === selectedNodeIds[0]);
   const selectedEdge = edges.find(e => e.id === selectedEdgeId);
+
+  const handleDownloadImage = useCallback(() => {
+    downloadFlowchartImage({ nodes, edges, theme });
+  }, [nodes, edges, theme]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#f3ede0] overflow-hidden font-sans">
@@ -328,6 +387,9 @@ export default function App() {
         zoom={zoom}
         setZoom={setZoom}
         onResetView={handleResetView}
+        onFitView={fitNodesToView}
+        onOpenMobileShapes={() => setMobileDrawer('shapes')}
+        onDownloadImage={handleDownloadImage}
         canUndo={historyIndex > 0}
         canRedo={historyIndex < history.length - 1}
         onUndo={handleUndo}
@@ -343,11 +405,13 @@ export default function App() {
 
       {/* Main Workspace Area */}
       <div className="flex-1 flex overflow-hidden relative">
-        <Sidebar
-          onAddNode={handleAddNodeFromSidebar}
-          activeConnectorStyle={activeConnectorStyle}
-          setActiveConnectorStyle={setActiveConnectorStyle}
-        />
+        <aside className="hidden md:flex">
+          <Sidebar
+            onAddNode={handleAddNodeFromSidebar}
+            activeConnectorStyle={activeConnectorStyle}
+            setActiveConnectorStyle={setActiveConnectorStyle}
+          />
+        </aside>
 
         <Canvas
           nodes={nodes}
@@ -368,18 +432,61 @@ export default function App() {
           onDeleteNode={handleDeleteNode}
           onCommitHistory={handleCommitHistory}
           activeConnectorStyle={activeConnectorStyle}
+          canUndo={historyIndex > 0}
+          canRedo={historyIndex < history.length - 1}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onFitView={fitNodesToView}
+          onDownloadImage={handleDownloadImage}
+          onOpenMobileShapes={() => setMobileDrawer('shapes')}
+          onOpenMobileInspector={() => setMobileDrawer('inspector')}
         />
 
-        <Inspector
-          selectedNode={selectedNode}
-          selectedEdge={selectedEdge}
-          onUpdateNode={handleUpdateNode}
-          onUpdateEdge={handleUpdateEdge}
-          onDeleteNode={handleDeleteNode}
-          onDeleteEdge={handleDeleteEdge}
-          onDuplicateNode={handleDuplicateNode}
-        />
+        <aside className="hidden md:flex">
+          <Inspector
+            selectedNode={selectedNode}
+            selectedEdge={selectedEdge}
+            onUpdateNode={handleUpdateNode}
+            onUpdateEdge={handleUpdateEdge}
+            onDeleteNode={handleDeleteNode}
+            onDeleteEdge={handleDeleteEdge}
+            onDuplicateNode={handleDuplicateNode}
+          />
+        </aside>
       </div>
+
+      {/* Mobile Bottom Drawers */}
+      {mobileDrawer === 'shapes' && (
+        <div className="fixed inset-0 z-50 md:hidden bg-black/45 backdrop-blur-xs flex flex-col justify-end">
+          <div className="fixed inset-0" onClick={() => setMobileDrawer(null)} />
+          <div className="relative bg-[#ede4d3] border-t border-[#d5c7ad] rounded-t-2xl max-h-[82vh] flex flex-col shadow-2xl p-4">
+            <Sidebar
+              onAddNode={handleAddNodeFromSidebar}
+              activeConnectorStyle={activeConnectorStyle}
+              setActiveConnectorStyle={setActiveConnectorStyle}
+              onClose={() => setMobileDrawer(null)}
+            />
+          </div>
+        </div>
+      )}
+
+      {mobileDrawer === 'inspector' && (
+        <div className="fixed inset-0 z-50 md:hidden bg-black/45 backdrop-blur-xs flex flex-col justify-end">
+          <div className="fixed inset-0" onClick={() => setMobileDrawer(null)} />
+          <div className="relative bg-[#ede4d3] border-t border-[#d5c7ad] rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl p-4">
+            <Inspector
+              selectedNode={selectedNode}
+              selectedEdge={selectedEdge}
+              onUpdateNode={handleUpdateNode}
+              onUpdateEdge={handleUpdateEdge}
+              onDeleteNode={handleDeleteNode}
+              onDeleteEdge={handleDeleteEdge}
+              onDuplicateNode={handleDuplicateNode}
+              onClose={() => setMobileDrawer(null)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Presentation Fullscreen Mode */}
       {showPresentation && (

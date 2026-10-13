@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import {
   Undo2, Redo2, ZoomIn, ZoomOut, Maximize2,
-  Trash2, Menu, RotateCcw, Palette
+  Trash2, Menu, RotateCcw, Palette, Download
 } from 'lucide-react';
 import { PRESENTATION_THEMES } from '../utils/templates';
 
@@ -11,6 +11,7 @@ export default function Toolbar({
   zoom,
   setZoom,
   onResetView,
+  onFitView,
   canUndo,
   canRedo,
   onUndo,
@@ -20,6 +21,8 @@ export default function Toolbar({
   onImportJson,
   onStartPresentation,
   onOpenExport,
+  onOpenMobileShapes,
+  onDownloadImage,
   nodeCount
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -45,21 +48,26 @@ export default function Toolbar({
     e.target.value = '';
   };
 
+  const handleLogoClick = () => {
+    if (onFitView) onFitView();
+    else if (onResetView) onResetView();
+  };
+
   return (
-    <header className="h-[68px] bg-[#efe7d6] border-b border-[#d5c7ad] px-6 flex items-center justify-between z-30 select-none shadow-[0_1px_3px_rgba(74,60,44,0.06)] relative">
+    <header className="h-[64px] bg-[#efe7d6] border-b border-[#d5c7ad] px-4 sm:px-6 flex items-center justify-between z-30 select-none shadow-[0_1px_3px_rgba(74,60,44,0.06)] relative">
       {/* Left: Brand & Main Navigation Links */}
-      <div className="flex items-center gap-10">
+      <div className="flex items-center gap-4 sm:gap-8">
         {/* FlowCanvas STUDIO Logo */}
-        <div className="flex flex-col items-center cursor-pointer" onClick={onResetView} title="Reset Canvas View">
+        <div className="flex flex-col items-center cursor-pointer" onClick={handleLogoClick} title="Center & Fit Flowchart">
           <span
-            className="text-[22px] font-semibold tracking-tight text-[#433627] leading-none"
+            className="text-[20px] sm:text-[22px] font-semibold tracking-tight text-[#433627] leading-none"
             style={{ fontFamily: "'Playfair Display', Georgia, serif" }}
           >
             FlowCanvas
           </span>
-          <div className="flex items-center gap-2 mt-1 w-full justify-center">
+          <div className="flex items-center gap-1.5 mt-0.5 w-full justify-center">
             <span className="h-[1px] flex-1 bg-[#9c8b70]" />
-            <span className="text-[9px] font-semibold uppercase tracking-[0.25em] text-[#6d5d47]">
+            <span className="text-[8px] sm:text-[9px] font-semibold uppercase tracking-[0.22em] text-[#6d5d47]">
               STUDIO
             </span>
             <span className="h-[1px] flex-1 bg-[#9c8b70]" />
@@ -67,7 +75,7 @@ export default function Toolbar({
         </div>
 
         {/* Navigation Links matching reference design */}
-        <nav className="flex items-center gap-6 text-[13px] font-medium text-[#4a3e2e]">
+        <nav className="hidden md:flex items-center gap-5 text-[13px] font-medium text-[#4a3e2e]">
           <button
             onClick={onOpenTemplates}
             className="hover:text-[#7c5d3b] transition-colors py-1 px-2 rounded-md hover:bg-[#e5dac5]/60"
@@ -99,11 +107,47 @@ export default function Toolbar({
           >
             Export
           </button>
+
+          {onDownloadImage && (
+            <>
+              <span className="h-3.5 w-[1px] bg-[#d5c7ad]" />
+              <button
+                onClick={onDownloadImage}
+                className="flex items-center gap-1.5 py-1.5 px-3 rounded-lg bg-[#5e4933] hover:bg-[#4b3a27] text-[#fdfaf3] font-semibold transition shadow-xs text-xs"
+                title="Download picture of flowchart (PNG)"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download</span>
+              </button>
+            </>
+          )}
         </nav>
       </div>
 
       {/* Center / Right Quick Controls & Present Flow */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-4">
+        {/* Mobile Add Shapes Button */}
+        {onOpenMobileShapes && (
+          <button
+            onClick={onOpenMobileShapes}
+            className="md:hidden flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#7c6143] text-[#fdfaf3] text-xs font-semibold shadow-sm hover:bg-[#695136] active:scale-95 transition"
+          >
+            <span className="text-sm leading-none">+</span>
+            <span>Shapes</span>
+          </button>
+        )}
+
+        {/* Mobile Quick Download Button */}
+        {onDownloadImage && (
+          <button
+            onClick={onDownloadImage}
+            className="md:hidden flex items-center justify-center p-2 rounded-lg bg-[#5e4933] text-[#fdfaf3] shadow-sm active:scale-95 transition"
+            title="Download Flowchart Image"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+        )}
+
         {/* Subtle Quick Undo/Redo & Zoom Pill */}
         <div className="hidden md:flex items-center gap-1 bg-[#e6dcc8]/80 px-2 py-1 rounded-lg border border-[#d2c3a8] text-[#544634]">
           <button
@@ -126,16 +170,16 @@ export default function Toolbar({
           <div className="h-3.5 w-[1px] bg-[#cbbba0] mx-1" />
 
           <button
-            onClick={() => setZoom(Math.max(0.35, +(zoom - 0.1).toFixed(2)))}
+            onClick={() => setZoom(Math.max(0.3, +(zoom - 0.1).toFixed(2)))}
             title="Zoom Out"
             className="p-1 rounded hover:bg-[#dcd0b8] transition"
           >
             <ZoomOut className="w-3.5 h-3.5" />
           </button>
           <span
-            onClick={onResetView}
-            title="Click to reset zoom & pan"
-            className="text-[11px] font-mono font-medium w-11 text-center cursor-pointer hover:underline"
+            onClick={onFitView || onResetView}
+            title="Click to Center & Fit Flowchart"
+            className="text-[11px] font-mono font-medium w-12 text-center cursor-pointer hover:underline"
           >
             {Math.round(zoom * 100)}%
           </span>
@@ -152,16 +196,16 @@ export default function Toolbar({
         <button
           onClick={onStartPresentation}
           disabled={nodeCount === 0}
-          className="px-5 py-2 rounded-lg bg-[#7c6143] hover:bg-[#695136] active:bg-[#59442d] disabled:opacity-40 text-[#fdfaf3] font-medium text-[13px] shadow-sm transition-all border border-[#634c33]"
+          className="px-3 py-1.5 sm:px-5 sm:py-2 rounded-lg bg-[#7c6143] hover:bg-[#695136] active:bg-[#59442d] disabled:opacity-40 text-[#fdfaf3] font-medium text-xs sm:text-[13px] shadow-sm transition-all border border-[#634c33]"
         >
-          Present Flow
+          Present
         </button>
 
         {/* Hamburger Menu for extra canvas tools */}
         <div className="relative">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="p-2 rounded-lg text-[#5c4d3a] hover:bg-[#e4d9c3] transition"
+            className="p-1.5 sm:p-2 rounded-lg text-[#5c4d3a] hover:bg-[#e4d9c3] transition"
             title="Studio Options"
           >
             <Menu className="w-5 h-5" />
@@ -174,6 +218,65 @@ export default function Toolbar({
                 onClick={() => setMenuOpen(false)}
               />
               <div className="absolute right-0 mt-2 w-56 rounded-xl bg-[#f5efe2] border border-[#cfc0a5] shadow-xl py-2 px-3 z-50 text-xs text-[#3d3225] space-y-2">
+                {/* Mobile Navigation Links in Dropdown */}
+                <div className="md:hidden border-b border-[#d8cbb3] pb-1.5 space-y-1">
+                  <button
+                    onClick={() => {
+                      onOpenTemplates();
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium"
+                  >
+                    Templates & Presets
+                  </button>
+                  <button
+                    onClick={() => {
+                      fileInputRef.current?.click();
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium"
+                  >
+                    Import Flowchart JSON
+                  </button>
+                  <button
+                    onClick={() => {
+                      onOpenExport();
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium"
+                  >
+                    Export Diagram
+                  </button>
+                  {onDownloadImage && (
+                    <button
+                      onClick={() => {
+                        onDownloadImage();
+                        setMenuOpen(false);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] font-medium flex items-center gap-2 text-[#2c251d]"
+                    >
+                      <Download className="w-3.5 h-3.5 text-[#7c6143]" />
+                      <span>Download Picture (PNG)</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <button
+                    onClick={() => {
+                      if (onFitView) onFitView();
+                      else if (onResetView) onResetView();
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] flex items-center justify-between font-medium"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Maximize2 className="w-3.5 h-3.5 text-[#7c6143]" />
+                      <span>Center & Fit Flowchart</span>
+                    </div>
+                  </button>
+                </div>
+
                 <div className="font-semibold text-[10px] uppercase tracking-wider text-[#7d6c55] px-1 pt-1">
                   Canvas Theme
                 </div>
@@ -198,16 +301,6 @@ export default function Toolbar({
                 </div>
 
                 <div className="border-t border-[#d8cbb3] my-1 pt-1.5 space-y-1">
-                  <button
-                    onClick={() => {
-                      onResetView();
-                      setMenuOpen(false);
-                    }}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[#e6dcc8] flex items-center gap-2"
-                  >
-                    <Maximize2 className="w-3.5 h-3.5 text-[#7c6143]" />
-                    <span>Center & Reset Zoom</span>
-                  </button>
                   <button
                     onClick={() => {
                       onClear();

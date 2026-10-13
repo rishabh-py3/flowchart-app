@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { Undo2, Redo2, ZoomIn, ZoomOut, Maximize2, Trash2, X, Edit3, Download } from 'lucide-react';
 import { calculatePathData, getNodePorts, getBestPortPair, computeAutoNodeLayout } from '../utils/geometry';
 
 export default function Canvas({
@@ -19,7 +20,15 @@ export default function Canvas({
   onDeleteEdge,
   onDeleteNode,
   onCommitHistory,
-  activeConnectorStyle
+  activeConnectorStyle,
+  onOpenMobileInspector,
+  onOpenMobileShapes,
+  fitNodesToView,
+  onDownloadImage,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo
 }) {
   const containerRef = useRef(null);
   const [isPanning, setIsPanning] = useState(false);
@@ -35,6 +44,20 @@ export default function Canvas({
   const [connectingFrom, setConnectingFrom] = useState(null); // { nodeId, portDir, port }
   const [hoveredPort, setHoveredPort] = useState(null); // { nodeId, portDir }
   const [mouseCanvasPos, setMouseCanvasPos] = useState({ x: 0, y: 0 });
+
+  // Touch gesture tracking refs
+  const touchStateRef = useRef({
+    isPinching: false,
+    startDist: 0,
+    startZoom: 1,
+    startCenter: { x: 0, y: 0 },
+    startPan: { x: 0, y: 0 },
+    touchStartPos: { x: 0, y: 0 },
+    touchStartTime: 0,
+    hasMoved: false
+  });
+  const draggingTouchNodeRef = useRef(null);
+  const connectingTouchPortRef = useRef(null);
 
   // Inline editing state
   const [editingNodeId, setEditingNodeId] = useState(null);
@@ -142,6 +165,218 @@ export default function Canvas({
 
     if (connectingFrom) {
       setConnectingFrom(null);
+    }
+  };
+
+  // --- MOBILE TOUCH EVENT HANDLERS ---
+  const handleCanvasTouchStart = (e) => {
+    if (editingNodeId || editingEdgeId) {
+      saveInlineLabel();
+    }
+
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      touchStateRef.current = {
+        isPinching: false,
+        startDist: 0,
+        startZoom: zoom,
+        startCenter: { x: t.clientX, y: t.clientY },
+        startPan: { ...pan },
+        touchStartPos: { x: t.clientX, y: t.clientY },
+        touchStartTime: Date.now(),
+        hasMoved: false
+      };
+      setIsPanning(true);
+      setStartPanMouse({ x: t.clientX - pan.x, y: t.clientY - pan.y });
+    } else if (e.touches.length === 2) {
+      setIsPanning(false);
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+      const center = { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
+      touchStateRef.current = {
+        isPinching: true,
+        startDist: dist,
+        startZoom: zoom,
+        startCenter: center,
+        startPan: { ...pan },
+        touchStartPos: center,
+        touchStartTime: Date.now(),
+        hasMoved: true
+      };
+    }
+  };
+
+  const handleCanvasTouchMove = (e) => {
+    if (e.cancelable) e.preventDefault();
+
+    // 1. Touch drag a node
+    if (draggingTouchNodeRef.current && e.touches.length === 1) {
+      const t = e.touches[0];
+      const info = draggingTouchNodeRef.current;
+      const dx = (t.clientX - info.startX) / zoom;
+      const dy = (t.clientY - info.startY) / zoom;
+      if (Math.hypot(dx, dy) > 3) info.hasMoved = true;
+
+      let newX = info.nodeStartX + dx;
+      let newY = info.nodeStartY + dy;
+
+      const currentNode = nodes.find(n => n.id === info.nodeId);
+      if (currentNode) {
+        const layout = computeAutoNodeLayout(currentNode);
+        const snapThreshold = 8;
+        const newSnapLines = [];
+        const currentCenterX = newX + layout.width / 2;
+        const currentCenterY = newY + layout.height / 2;
+
+        nodes.forEach(other => {
+          if (other.id === info.nodeId) return;
+          const otherLayout = computeAutoNodeLayout(other);
+          const otherCenterX = other.x + otherLayout.width / 2;
+          const otherCenterY = other.y + otherLayout.height / 2;
+
+          if (Math.abs(currentCenterX - otherCenterX) < snapThreshold) {
+            newX = otherCenterX - layout.width / 2;
+            newSnapLines.push({ type: 'x', x: otherCenterX });
+          }
+          if (Math.abs(currentCenterY - otherCenterY) < snapThreshold) {
+            newY = otherCenterY - layout.height / 2;
+            newSnapLines.push({ type: 'y', y: otherCenterY });
+          }
+        });
+        setSnapLines(newSnapLines);
+      }
+
+      onUpdateNode(info.nodeId, { x: Math.round(newX), y: Math.round(newY) }, false, true);
+      return;
+    }
+
+    // 2. Touch connecting line
+    if (connectingTouchPortRef.current && e.touches.length === 1) {
+      const t = e.touches[0];
+      const cPos = screenToCanvas(t.clientX, t.clientY);
+      setMouseCanvasPos(cPos);
+      return;
+    }
+
+    // 3. Pinch-to-zoom (2 fingers)
+    if (touchStateRef.current.isPinching && e.touches.length === 2) {
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+      const currCenter = { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
+      const { startDist, startZoom, startCenter, startPan } = touchStateRef.current;
+      if (startDist > 0) {
+        const scale = dist / startDist;
+        const nextZoom = Math.min(2.2, Math.max(0.3, +(startZoom * scale).toFixed(2)));
+        const ratio = nextZoom / startZoom;
+        const nextPanX = currCenter.x - (startCenter.x - startPan.x) * ratio;
+        const nextPanY = currCenter.y - (startCenter.y - startPan.y) * ratio;
+        setZoom(nextZoom);
+        setPan({ x: Math.round(nextPanX), y: Math.round(nextPanY) });
+      }
+      return;
+    }
+
+    // 4. Touch pan canvas (1 finger)
+    if (isPanning && e.touches.length === 1) {
+      const t = e.touches[0];
+      const dx = t.clientX - touchStateRef.current.touchStartPos.x;
+      const dy = t.clientY - touchStateRef.current.touchStartPos.y;
+      if (Math.hypot(dx, dy) > 3) touchStateRef.current.hasMoved = true;
+      setPan({
+        x: touchStateRef.current.startPan.x + dx,
+        y: touchStateRef.current.startPan.y + dy
+      });
+    }
+  };
+
+  const handleCanvasTouchEnd = (e) => {
+    // Drop dragged node
+    if (draggingTouchNodeRef.current) {
+      if (draggingTouchNodeRef.current.hasMoved && onCommitHistory) {
+        onCommitHistory();
+      }
+      draggingTouchNodeRef.current = null;
+      setDraggingNodeId(null);
+      setSnapLines([]);
+      return;
+    }
+
+    // Connect port
+    if (connectingTouchPortRef.current) {
+      const fromInfo = connectingTouchPortRef.current;
+      const t = e.changedTouches[0];
+      if (t) {
+        const cPos = screenToCanvas(t.clientX, t.clientY);
+        const target = sizedNodes.find(n =>
+          n.id !== fromInfo.nodeId &&
+          cPos.x >= n.x && cPos.x <= n.x + n.width &&
+          cPos.y >= n.y && cPos.y <= n.y + n.height
+        );
+        if (target) {
+          const sn = sizedNodesMap[fromInfo.nodeId];
+          const pair = getBestPortPair(sn, target, { fromPort: fromInfo.portDir });
+          onAddEdge({
+            id: 'edge_' + Date.now(),
+            from: fromInfo.nodeId,
+            to: target.id,
+            fromPort: fromInfo.portDir,
+            toPort: pair.toDir,
+            label: '',
+            style: activeConnectorStyle || 'orthogonal',
+            arrow: 'end'
+          });
+        }
+      }
+      connectingTouchPortRef.current = null;
+      setConnectingFrom(null);
+      return;
+    }
+
+    if (e.touches.length === 0) {
+      if (!touchStateRef.current.hasMoved && (Date.now() - touchStateRef.current.touchStartTime < 300)) {
+        setSelectedNodeIds([]);
+        setSelectedEdgeId(null);
+      }
+      setIsPanning(false);
+      touchStateRef.current.isPinching = false;
+    }
+  };
+
+  const handleNodeTouchStart = (e, node) => {
+    e.stopPropagation();
+    if (editingNodeId && editingNodeId !== node.id) {
+      saveInlineLabel();
+    }
+    setSelectedEdgeId(null);
+    setSelectedNodeIds([node.id]);
+
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      draggingTouchNodeRef.current = {
+        nodeId: node.id,
+        startX: t.clientX,
+        startY: t.clientY,
+        nodeStartX: node.x,
+        nodeStartY: node.y,
+        hasMoved: false
+      };
+      setDraggingNodeId(node.id);
+    }
+  };
+
+  const handlePortTouchStart = (e, node, dir, portPos) => {
+    e.stopPropagation();
+    if (e.touches.length === 1) {
+      connectingTouchPortRef.current = {
+        nodeId: node.id,
+        portDir: dir
+      };
+      setConnectingFrom({ nodeId: node.id, portDir: dir, port: portPos });
+      const t = e.touches[0];
+      const cPos = screenToCanvas(t.clientX, t.clientY);
+      setMouseCanvasPos(cPos);
     }
   };
 
@@ -313,11 +548,16 @@ export default function Canvas({
       onMouseDown={handleCanvasMouseDown}
       onMouseMove={handleCanvasMouseMove}
       onMouseUp={handleCanvasMouseUp}
+      onTouchStart={handleCanvasTouchStart}
+      onTouchMove={handleCanvasTouchMove}
+      onTouchEnd={handleCanvasTouchEnd}
+      onTouchCancel={handleCanvasTouchEnd}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
+      style={{ touchAction: 'none' }}
       className={`relative flex-1 h-full w-full overflow-hidden select-none cursor-default canvas-bg ${theme.canvasBgClass}`}
     >
-      <svg className="w-full h-full absolute inset-0 pointer-events-none">
+      <svg className="w-full h-full absolute inset-0 pointer-events-none" style={{ touchAction: 'none' }}>
         <defs>
           <marker
             id="arrowhead-end"
@@ -515,7 +755,9 @@ export default function Canvas({
               <g
                 key={node.id}
                 transform={`translate(${node.x}, ${node.y})`}
+                style={{ touchAction: 'none' }}
                 onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                onTouchStart={(e) => handleNodeTouchStart(e, node)}
                 onMouseUp={(e) => handleNodeMouseUp(e, node)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
@@ -613,13 +855,14 @@ export default function Canvas({
                       <circle
                         cx={localX}
                         cy={localY}
-                        r="12"
+                        r="16"
                         fill="transparent"
                         onMouseEnter={() => setHoveredPort({ nodeId: node.id, portDir: dir })}
                         onMouseLeave={() => setHoveredPort(null)}
                         onMouseDown={(e) => handlePortMouseDown(e, node, dir)}
+                        onTouchStart={(e) => handlePortTouchStart(e, node, dir, ports[dir])}
                         onMouseUp={(e) => handlePortMouseUp(e, node, dir)}
-                        className="cursor-crosshair"
+                        className="cursor-crosshair pointer-events-auto"
                       />
                       <circle
                         cx={localX}
@@ -631,7 +874,7 @@ export default function Canvas({
                         className={`pointer-events-none transition-opacity ${
                           connectingFrom || isSelected
                             ? 'opacity-90'
-                            : 'opacity-0 group-hover:opacity-100'
+                            : 'opacity-60 md:opacity-0 group-hover:opacity-100'
                         }`}
                       />
                     </g>
@@ -642,6 +885,98 @@ export default function Canvas({
           })}
         </g>
       </svg>
+
+      {/* Floating Canvas Controls */}
+      <div className="absolute bottom-4 right-4 z-30 flex items-center gap-1.5 bg-[#ede4d3]/95 backdrop-blur-xs border border-[#cfc0a5] shadow-lg rounded-xl p-1 text-[#4a3e2e]">
+        {onUndo && (
+          <button
+            onClick={onUndo}
+            disabled={!canUndo}
+            className="p-2 rounded-lg hover:bg-[#ded2bc] disabled:opacity-30 transition"
+            title="Undo"
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {onRedo && (
+          <button
+            onClick={onRedo}
+            disabled={!canRedo}
+            className="p-2 rounded-lg hover:bg-[#ded2bc] disabled:opacity-30 transition"
+            title="Redo"
+          >
+            <Redo2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        <span className="h-4 w-[1px] bg-[#cfc0a5] mx-0.5" />
+        <button
+          onClick={() => setZoom(Math.max(0.3, +(zoom - 0.1).toFixed(2)))}
+          className="p-2 rounded-lg hover:bg-[#ded2bc] transition"
+          title="Zoom Out"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => fitNodesToView && fitNodesToView()}
+          className="px-2 py-1 rounded-lg hover:bg-[#ded2bc] font-mono text-xs font-semibold transition"
+          title="Center & Fit Flowchart"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          onClick={() => setZoom(Math.min(2.2, +(zoom + 0.1).toFixed(2)))}
+          className="p-2 rounded-lg hover:bg-[#ded2bc] transition"
+          title="Zoom In"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+        {onDownloadImage && (
+          <>
+            <span className="h-4 w-[1px] bg-[#cfc0a5] mx-0.5" />
+            <button
+              onClick={onDownloadImage}
+              className="p-2 rounded-lg hover:bg-[#ded2bc] text-[#5c442d] transition"
+              title="Download Flowchart Image (PNG)"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Mobile Floating Action Pill when block or edge is selected */}
+      {(selectedNodeIds.length > 0 || selectedEdgeId) && (
+        <div className="md:hidden fixed bottom-18 left-1/2 -translate-x/1/2 z-40 bg-[#f5efe2] border border-[#cfc0a5] shadow-2xl rounded-full px-3.5 py-2 flex items-center gap-2.5 text-xs text-[#2c251d]">
+          <span className="font-semibold max-w-[120px] truncate text-[#4a3e2e]">
+            {sizedNodes.find(n => n.id === selectedNodeIds[0])?.label || 'Connection'}
+          </span>
+          {onOpenMobileInspector && (
+            <button
+              onClick={onOpenMobileInspector}
+              className="px-2.5 py-1 rounded-lg bg-[#7c6143] text-[#fdfaf3] font-medium"
+            >
+              Edit
+            </button>
+          )}
+          <button
+            onClick={() => {
+              if (selectedNodeIds.length > 0) onDeleteNode(selectedNodeIds[0]);
+              else if (selectedEdgeId) onDeleteEdge(selectedEdgeId);
+            }}
+            className="p-1 text-rose-700 font-bold"
+            title="Delete"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => { setSelectedNodeIds([]); setSelectedEdgeId(null); }}
+            className="p-1 text-[#72634f]"
+            title="Deselect"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

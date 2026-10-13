@@ -1394,6 +1394,9 @@
           }
         };
         reader.readAsText(file);
+        e.target.value = '';
+      };
+
       const generateFlowchartSvgString = (padding = 48) => {
         if (!nodes || nodes.length === 0) {
           alert('Your canvas is empty. Add flowchart blocks before downloading.');

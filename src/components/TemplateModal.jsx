@@ -24,22 +24,22 @@ export default function TemplateModal({ onLoadTemplate, onImportJson, onClose })
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 relative">
+    <div className="fixed inset-0 z-50 bg-[#2c251d]/60 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
+      <div className="w-full max-w-lg bg-[#f5efe2] border border-[#cfc0a5] rounded-2xl shadow-2xl p-6 relative text-[#2c251d]">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+          className="absolute top-4 right-4 p-1.5 rounded-lg text-[#72634f] hover:text-[#2c251d] hover:bg-[#e5dac5] transition"
         >
           <X className="w-4 h-4" />
         </button>
 
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center border border-indigo-500/30">
+          <div className="w-10 h-10 rounded-xl bg-[#7c6143]/15 text-[#7c6143] flex items-center justify-center border border-[#7c6143]/30">
             <FolderOpen className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-white">Flowchart Starter Templates</h2>
-            <p className="text-xs text-slate-400">Choose a presentation template or import a project file</p>
+            <h2 className="text-base font-bold text-[#2c251d]">Templates & Presets</h2>
+            <p className="text-xs text-[#72634f]">Load a ready-to-edit flowchart or import a JSON file</p>
           </div>
         </div>
 
@@ -51,30 +51,30 @@ export default function TemplateModal({ onLoadTemplate, onImportJson, onClose })
                 onLoadTemplate(tpl);
                 onClose();
               }}
-              className="group p-4 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/50 hover:border-blue-500/50 cursor-pointer transition flex items-center justify-between"
+              className="group p-4 rounded-xl bg-[#ede4d3] hover:bg-[#e5d9c3] border border-[#cfc0a5] hover:border-[#8c7051] cursor-pointer transition flex items-center justify-between"
             >
               <div>
-                <h3 className="text-xs font-semibold text-slate-100 group-hover:text-blue-400 flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <h3 className="text-xs font-bold text-[#2c251d] group-hover:text-[#695136] flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 text-[#8c6b3f]" />
                   {tpl.name}
                 </h3>
-                <p className="text-[11px] text-slate-400 mt-1 max-w-sm">
+                <p className="text-[11px] text-[#6d5d47] mt-1 max-w-sm">
                   {tpl.description}
                 </p>
-                <div className="text-[10px] text-slate-500 mt-2 font-mono">
+                <div className="text-[10px] text-[#84735c] mt-2 font-mono">
                   {tpl.nodes.length} Blocks • {tpl.edges.length} Connections
                 </div>
               </div>
 
-              <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-slate-400 group-hover:text-white group-hover:translate-x-0.5 transition-all">
+              <div className="w-8 h-8 rounded-lg bg-[#f5efe2] border border-[#d5c7ad] flex items-center justify-center text-[#5c4d3a] group-hover:bg-[#7c6143] group-hover:text-[#fdfaf3] group-hover:translate-x-0.5 transition-all">
                 <ArrowRight className="w-4 h-4" />
               </div>
             </div>
           ))}
 
           {/* Import JSON file */}
-          <label className="flex items-center justify-center gap-2 p-3.5 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-dashed border-slate-700 hover:border-slate-500 text-slate-300 text-xs font-medium cursor-pointer transition mt-4">
-            <Upload className="w-4 h-4 text-blue-400" />
+          <label className="flex items-center justify-center gap-2 p-3.5 rounded-xl bg-[#ede4d3]/60 hover:bg-[#e5d9c3] border border-dashed border-[#b5a489] hover:border-[#7c6143] text-[#4a3e2e] text-xs font-medium cursor-pointer transition mt-4">
+            <Upload className="w-4 h-4 text-[#7c6143]" />
             <span>Import JSON Project File</span>
             <input type="file" accept=".json" onChange={handleFileImport} className="hidden" />
           </label>

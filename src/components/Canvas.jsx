@@ -1,11 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { calculatePathData, getNodePorts, getBestPortPair } from '../utils/geometry';
+import React, { useState, useRef } from 'react';
+import { calculatePathData, getNodePorts, getBestPortPair, computeAutoNodeLayout } from '../utils/geometry';
 
 export default function Canvas({
   nodes,
   edges,
   theme,
   zoom,
+  setZoom,
   pan,
   setPan,
   selectedNodeIds,
@@ -17,6 +18,7 @@ export default function Canvas({
   onAddEdge,
   onDeleteEdge,
   onDeleteNode,
+  onCommitHistory,
   activeConnectorStyle
 }) {
   const containerRef = useRef(null);
@@ -27,9 +29,11 @@ export default function Canvas({
   const [draggingNodeId, setDraggingNodeId] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [snapLines, setSnapLines] = useState([]);
+  const [hasMovedDuringDrag, setHasMovedDuringDrag] = useState(false);
 
   // Connecting line state
-  const [connectingFrom, setConnectingFrom] = useState(null); // { nodeId, portDir }
+  const [connectingFrom, setConnectingFrom] = useState(null); // { nodeId, portDir, port }
+  const [hoveredPort, setHoveredPort] = useState(null); // { nodeId, portDir }
   const [mouseCanvasPos, setMouseCanvasPos] = useState({ x: 0, y: 0 });
 
   // Inline editing state
@@ -47,13 +51,29 @@ export default function Canvas({
     };
   };
 
+  // Smooth Wheel Zoom / Pan
+  const handleWheel = (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = -e.deltaY * 0.0015;
+      const nextZoom = Math.min(2.2, Math.max(0.35, +(zoom + delta).toFixed(2)));
+      setZoom(nextZoom);
+    } else {
+      setPan(prev => ({
+        x: prev.x - e.deltaX * 0.6,
+        y: prev.y - e.deltaY * 0.6
+      }));
+    }
+  };
+
   // Canvas Mouse Down: Start Pan or Deselect
   const handleCanvasMouseDown = (e) => {
     if (e.target.tagName === 'svg' || e.target.classList.contains('canvas-bg')) {
+      if (editingNodeId || editingEdgeId) {
+        saveInlineLabel();
+      }
       setSelectedNodeIds([]);
       setSelectedEdgeId(null);
-      setEditingNodeId(null);
-      setEditingEdgeId(null);
 
       setIsPanning(true);
       setStartPanMouse({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -77,28 +97,27 @@ export default function Canvas({
       let newX = canvasPos.x - dragOffset.x;
       let newY = canvasPos.y - dragOffset.y;
 
-      // Calculate Snap Alignment Lines (X & Y)
       const currentNode = nodes.find(n => n.id === draggingNodeId);
       if (currentNode) {
-        const snapThreshold = 10;
+        const layout = computeAutoNodeLayout(currentNode);
+        const snapThreshold = 8;
         const newSnapLines = [];
-        const currentCenterX = newX + currentNode.width / 2;
-        const currentCenterY = newY + currentNode.height / 2;
+        const currentCenterX = newX + layout.width / 2;
+        const currentCenterY = newY + layout.height / 2;
 
         nodes.forEach(other => {
           if (other.id === draggingNodeId) return;
-          const otherCenterX = other.x + other.width / 2;
-          const otherCenterY = other.y + other.height / 2;
+          const otherLayout = computeAutoNodeLayout(other);
+          const otherCenterX = other.x + otherLayout.width / 2;
+          const otherCenterY = other.y + otherLayout.height / 2;
 
-          // X alignment (vertical line)
           if (Math.abs(currentCenterX - otherCenterX) < snapThreshold) {
-            newX = otherCenterX - currentNode.width / 2;
+            newX = otherCenterX - layout.width / 2;
             newSnapLines.push({ type: 'x', x: otherCenterX });
           }
 
-          // Y alignment (horizontal line)
           if (Math.abs(currentCenterY - otherCenterY) < snapThreshold) {
-            newY = otherCenterY - currentNode.height / 2;
+            newY = otherCenterY - layout.height / 2;
             newSnapLines.push({ type: 'y', y: otherCenterY });
           }
         });
@@ -106,14 +125,19 @@ export default function Canvas({
         setSnapLines(newSnapLines);
       }
 
-      onUpdateNode(draggingNodeId, { x: Math.round(newX), y: Math.round(newY) });
+      setHasMovedDuringDrag(true);
+      onUpdateNode(draggingNodeId, { x: Math.round(newX), y: Math.round(newY) }, false, true);
     }
   };
 
   // Canvas Mouse Up
   const handleCanvasMouseUp = () => {
+    if (draggingNodeId && hasMovedDuringDrag && onCommitHistory) {
+      onCommitHistory();
+    }
     setIsPanning(false);
     setDraggingNodeId(null);
+    setHasMovedDuringDrag(false);
     setSnapLines([]);
 
     if (connectingFrom) {
@@ -130,28 +154,35 @@ export default function Canvas({
     try {
       const shapeItem = JSON.parse(dataStr);
       const canvasPos = screenToCanvas(e.clientX, e.clientY);
-
       const themeColors = theme.nodeColors[shapeItem.id] || theme.nodeColors.process;
 
-      const newNode = {
+      const baseNode = {
         id: 'node_' + Date.now(),
         type: shapeItem.id,
         label: shapeItem.name,
-        x: Math.round(canvasPos.x - shapeItem.defaultWidth / 2),
-        y: Math.round(canvasPos.y - shapeItem.defaultHeight / 2),
         width: shapeItem.defaultWidth,
         height: shapeItem.defaultHeight,
         fill: themeColors.fill,
         stroke: themeColors.stroke,
         text: themeColors.text,
         font: 'Inter',
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: '500',
         stepIndex: nodes.length + 1
       };
+      const layout = computeAutoNodeLayout(baseNode);
 
-      onUpdateNode(newNode.id, newNode, true); // add
+      const newNode = {
+        ...baseNode,
+        width: layout.width,
+        height: layout.height,
+        x: Math.round(canvasPos.x - layout.width / 2),
+        y: Math.round(canvasPos.y - layout.height / 2)
+      };
+
+      onUpdateNode(newNode.id, newNode, true);
       setSelectedNodeIds([newNode.id]);
+      setSelectedEdgeId(null);
     } catch (err) {
       console.error('Failed to parse dropped shape:', err);
     }
@@ -165,6 +196,9 @@ export default function Canvas({
   // Node Mouse Down: Select & Drag
   const handleNodeMouseDown = (e, node) => {
     e.stopPropagation();
+    if (editingNodeId && editingNodeId !== node.id) {
+      saveInlineLabel();
+    }
     setSelectedEdgeId(null);
 
     if (e.shiftKey) {
@@ -179,18 +213,47 @@ export default function Canvas({
 
     const canvasPos = screenToCanvas(e.clientX, e.clientY);
     setDraggingNodeId(node.id);
+    setHasMovedDuringDrag(false);
     setDragOffset({
       x: canvasPos.x - node.x,
       y: canvasPos.y - node.y
     });
   };
 
+  // Node Mouse Up: Finish connection if dropped anywhere on a target node
+  const handleNodeMouseUp = (e, targetNode) => {
+    if (connectingFrom && connectingFrom.nodeId !== targetNode.id) {
+      e.stopPropagation();
+      const sourceNode = nodes.find(n => n.id === connectingFrom.nodeId);
+      let targetPortDir = hoveredPort?.nodeId === targetNode.id ? hoveredPort.portDir : null;
+
+      if (!targetPortDir && sourceNode) {
+        const pair = getBestPortPair(sourceNode, targetNode, { fromPort: connectingFrom.portDir });
+        targetPortDir = pair.toDir;
+      }
+
+      onAddEdge({
+        id: 'edge_' + Date.now(),
+        from: connectingFrom.nodeId,
+        to: targetNode.id,
+        fromPort: connectingFrom.portDir,
+        toPort: targetPortDir,
+        label: '',
+        style: activeConnectorStyle || 'orthogonal',
+        arrow: 'end'
+      });
+      setConnectingFrom(null);
+    }
+  };
+
   // Connection Port Click/Drag
   const handlePortMouseDown = (e, node, portDir) => {
     e.stopPropagation();
-    const ports = getNodePorts(node);
+    const sizedNode = { ...node, ...computeAutoNodeLayout(node) };
+    const ports = getNodePorts(sizedNode);
     setConnectingFrom({
       nodeId: node.id,
+      portDir,
       port: ports[portDir]
     });
   };
@@ -202,6 +265,8 @@ export default function Canvas({
         id: 'edge_' + Date.now(),
         from: connectingFrom.nodeId,
         to: targetNode.id,
+        fromPort: connectingFrom.portDir,
+        toPort: portDir,
         label: '',
         style: activeConnectorStyle || 'orthogonal',
         arrow: 'end'
@@ -222,37 +287,57 @@ export default function Canvas({
     }
   };
 
+  // Compute live auto-sized nodes map so ports and boxes are always 100% in sync with text
+  const sizedNodesMap = {};
+  const sizedNodes = nodes.map(n => {
+    const activeNode = editingNodeId === n.id ? { ...n, label: tempLabel } : n;
+    const layout = computeAutoNodeLayout(activeNode);
+    const sn = {
+      ...n,
+      width: layout.width,
+      height: layout.height,
+      _lines: layout.lines,
+      _lineHeight: layout.lineHeight
+    };
+    sizedNodesMap[n.id] = sn;
+    return sn;
+  });
+
+  const defaultEdgeColor = theme.edgeStroke || '#736049';
+  const selectedColor = theme.accent || '#7a5c3e';
+
   return (
     <div
       ref={containerRef}
+      onWheel={handleWheel}
       onMouseDown={handleCanvasMouseDown}
       onMouseMove={handleCanvasMouseMove}
       onMouseUp={handleCanvasMouseUp}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
-      className={`relative flex-1 h-full w-full overflow-hidden select-none cursor-crosshair canvas-bg ${theme.canvasBgClass}`}
+      className={`relative flex-1 h-full w-full overflow-hidden select-none cursor-default canvas-bg ${theme.canvasBgClass}`}
     >
       <svg className="w-full h-full absolute inset-0 pointer-events-none">
         <defs>
           <marker
             id="arrowhead-end"
-            markerWidth="10"
+            markerWidth="9"
             markerHeight="7"
-            refX="9"
+            refX="8"
             refY="3.5"
             orient="auto"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+            <polygon points="0 0.5, 8.5 3.5, 0 6.5" fill={defaultEdgeColor} />
           </marker>
           <marker
             id="arrowhead-selected"
-            markerWidth="10"
+            markerWidth="9"
             markerHeight="7"
-            refX="9"
+            refX="8"
             refY="3.5"
             orient="auto"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" />
+            <polygon points="0 0.5, 8.5 3.5, 0 6.5" fill={selectedColor} />
           </marker>
         </defs>
 
@@ -266,7 +351,7 @@ export default function Canvas({
                 y1={-10000}
                 x2={line.x}
                 y2={10000}
-                stroke="#3b82f6"
+                stroke="#9e7b56"
                 strokeWidth="1"
                 strokeDasharray="4 4"
               />
@@ -277,7 +362,7 @@ export default function Canvas({
                 y1={line.y}
                 x2={10000}
                 y2={line.y}
-                stroke="#3b82f6"
+                stroke="#9e7b56"
                 strokeWidth="1"
                 strokeDasharray="4 4"
               />
@@ -286,13 +371,18 @@ export default function Canvas({
 
           {/* Render Connections / Edges */}
           {edges.map(edge => {
-            const sourceNode = nodes.find(n => n.id === edge.from);
-            const targetNode = nodes.find(n => n.id === edge.to);
+            const sourceNode = sizedNodesMap[edge.from];
+            const targetNode = sizedNodesMap[edge.to];
             if (!sourceNode || !targetNode) return null;
 
-            const { fromPort, toPort } = getBestPortPair(sourceNode, targetNode);
+            const { fromPort, toPort } = getBestPortPair(sourceNode, targetNode, edge);
             const pathInfo = calculatePathData(fromPort, toPort, edge.style || 'orthogonal');
             const isSelected = selectedEdgeId === edge.id;
+
+            // Position label cleanly above horizontal segments or beside vertical segments
+            const isMostlyHoriz = Math.abs(toPort.x - fromPort.x) >= Math.abs(toPort.y - fromPort.y);
+            const labelOffsetX = isMostlyHoriz ? 0 : 18;
+            const labelOffsetY = isMostlyHoriz ? -12 : 0;
 
             return (
               <g key={edge.id} className="pointer-events-auto group cursor-pointer">
@@ -313,12 +403,12 @@ export default function Canvas({
                     setTempLabel(edge.label || '');
                   }}
                 />
-                {/* Visible line */}
+                {/* Visible flow line */}
                 <path
                   d={pathInfo.d}
                   fill="none"
-                  stroke={isSelected ? '#3b82f6' : (edge.stroke || '#64748b')}
-                  strokeWidth={isSelected ? '3' : '2'}
+                  stroke={isSelected ? selectedColor : (edge.stroke || defaultEdgeColor)}
+                  strokeWidth={isSelected ? '2.4' : '1.6'}
                   markerEnd={isSelected ? 'url(#arrowhead-selected)' : 'url(#arrowhead-end)'}
                   className="transition-colors"
                 />
@@ -338,13 +428,19 @@ export default function Canvas({
                       onChange={(e) => setTempLabel(e.target.value)}
                       onBlur={saveInlineLabel}
                       onKeyDown={(e) => e.key === 'Enter' && saveInlineLabel()}
-                      className="w-full h-full bg-slate-900 text-white text-xs px-2 py-0.5 rounded border border-blue-500 outline-none text-center shadow-lg"
+                      placeholder="Label..."
+                      className="w-full h-full bg-[#fdfaf3] text-[#2c251d] text-xs px-2 py-0.5 rounded-md border border-[#7c6143] outline-none text-center shadow-md"
                     />
                   </foreignObject>
                 ) : (
                   edge.label && (
                     <g
-                      transform={`translate(${pathInfo.midPoint.x}, ${pathInfo.midPoint.y})`}
+                      transform={`translate(${pathInfo.midPoint.x + labelOffsetX}, ${pathInfo.midPoint.y + labelOffsetY})`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedEdgeId(edge.id);
+                        setSelectedNodeIds([]);
+                      }}
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         setEditingEdgeId(edge.id);
@@ -352,24 +448,22 @@ export default function Canvas({
                       }}
                     >
                       <rect
-                        x={-(edge.label.length * 3.5 + 8)}
-                        y="-10"
-                        width={edge.label.length * 7 + 16}
-                        height="20"
+                        x={-(edge.label.length * 3.4 + 6)}
+                        y="-9"
+                        width={edge.label.length * 6.8 + 12}
+                        height="18"
                         rx="4"
-                        fill={theme.textDark ? '#ffffff' : '#0f172a'}
-                        stroke={isSelected ? '#3b82f6' : '#475569'}
-                        strokeWidth="1"
-                        className="shadow-sm"
+                        fill={theme.bgColor || '#f3ede0'}
+                        fillOpacity="0.88"
                       />
                       <text
                         x="0"
-                        y="3"
+                        y="3.5"
                         textAnchor="middle"
-                        fill={theme.textDark ? '#0f172a' : '#f8fafc'}
-                        fontSize="11"
+                        fill={theme.textDark ? '#3b3023' : '#f8fafc'}
+                        fontSize="12"
                         fontWeight="500"
-                        className="pointer-events-none"
+                        className="pointer-events-none select-none"
                       >
                         {edge.label}
                       </text>
@@ -383,25 +477,46 @@ export default function Canvas({
           {/* Render Active Dragging Connection Line */}
           {connectingFrom && (
             <path
-              d={calculatePathData(connectingFrom.port, { x: mouseCanvasPos.x, y: mouseCanvasPos.y, dir: 'center' }, activeConnectorStyle).d}
+              d={calculatePathData(
+                connectingFrom.port,
+                { x: mouseCanvasPos.x, y: mouseCanvasPos.y, dir: 'center' },
+                activeConnectorStyle
+              ).d}
               fill="none"
-              stroke="#3b82f6"
-              strokeWidth="2.5"
-              strokeDasharray="6 4"
+              stroke={selectedColor}
+              strokeWidth="2"
+              strokeDasharray="5 4"
+              markerEnd="url(#arrowhead-selected)"
             />
           )}
 
           {/* Render Nodes */}
-          {nodes.map(node => {
+          {sizedNodes.map(node => {
             const isSelected = selectedNodeIds.includes(node.id);
             const isEditing = editingNodeId === node.id;
             const ports = getNodePorts(node);
+            const lines = node._lines || [node.label];
+            const lineHeight = node._lineHeight || 18;
+            const fontSize = node.fontSize || 13;
+
+            // Vertical center calculation for multi-line SVG text
+            const totalTextHeight = lines.length * lineHeight;
+            const startTextY = (node.height - totalTextHeight) / 2 + fontSize * 0.82 + (node.type === 'database' ? 6 : 0) - (node.type === 'document' ? 4 : 0);
+
+            // Step badge position adjusted accurately for each shape geometry
+            const badgeX = node.type === 'decision'
+              ? node.width / 2
+              : node.type === 'input'
+                ? node.width - 10
+                : node.width - 6;
+            const badgeY = node.type === 'decision' ? -4 : -4;
 
             return (
               <g
                 key={node.id}
                 transform={`translate(${node.x}, ${node.y})`}
                 onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                onMouseUp={(e) => handleNodeMouseUp(e, node)}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   setEditingNodeId(node.id);
@@ -412,55 +527,73 @@ export default function Canvas({
                 {/* Node Shape SVG Graphics */}
                 {renderNodeSvgShape(node, isSelected, theme)}
 
-                {/* Node Text Content or Inline Input */}
+                {/* Node Multi-line Auto-Fitting Text or Inline Editor */}
                 {isEditing ? (
                   <foreignObject
-                    x="10"
-                    y="10"
-                    width={node.width - 20}
-                    height={node.height - 20}
+                    x="8"
+                    y="8"
+                    width={Math.max(80, node.width - 16)}
+                    height={Math.max(40, node.height - 16)}
                   >
                     <div className="h-full w-full flex items-center justify-center">
                       <textarea
                         autoFocus
                         value={tempLabel}
-                        onChange={(e) => setTempLabel(e.target.value)}
+                        onChange={(e) => {
+                          setTempLabel(e.target.value);
+                          onUpdateNode(node.id, { label: e.target.value }, false, true);
+                        }}
                         onBlur={saveInlineLabel}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
                             saveInlineLabel();
+                          } else if (e.key === 'Escape') {
+                            setEditingNodeId(null);
                           }
                         }}
-                        className="w-full h-full bg-slate-900/90 text-white text-xs p-1 rounded border border-blue-500 outline-none text-center resize-none shadow-xl"
+                        className="w-full h-full bg-[#fdfaf3]/95 text-[#2c251d] text-xs p-1.5 rounded-lg border border-[#7c6143] outline-none text-center resize-none shadow-inner font-medium leading-snug"
                       />
                     </div>
                   </foreignObject>
                 ) : (
                   <text
                     x={node.width / 2}
-                    y={node.height / 2 + 4}
                     textAnchor="middle"
-                    fill={node.text || (theme.textDark ? '#0f172a' : '#f8fafc')}
-                    fontSize={node.fontSize || 14}
+                    fill={node.text || (theme.textDark ? '#2c251d' : '#f8fafc')}
+                    fontSize={fontSize}
                     fontWeight={node.fontWeight || '500'}
                     fontFamily={node.font || 'Inter'}
                     className="pointer-events-none select-none"
                   >
-                    {node.label}
+                    {lines.map((line, i) => (
+                      <tspan
+                        key={i}
+                        x={node.width / 2}
+                        y={startTextY + i * lineHeight}
+                      >
+                        {line}
+                      </tspan>
+                    ))}
                   </text>
                 )}
 
                 {/* Presentation Step Index Badge */}
                 {node.stepIndex && (
-                  <g transform={`translate(${node.width - 8}, -6)`}>
-                    <circle r="10" fill="#3b82f6" stroke="#ffffff" strokeWidth="1.5" />
+                  <g transform={`translate(${badgeX}, ${badgeY})`} className="pointer-events-none">
+                    <circle
+                      r="11.5"
+                      fill="#f6efe0"
+                      stroke="#7a6852"
+                      strokeWidth="1.2"
+                      style={{ filter: 'drop-shadow(0px 1px 2px rgba(60, 45, 30, 0.15))' }}
+                    />
                     <text
-                      y="3.5"
+                      y="3.8"
                       textAnchor="middle"
-                      fill="#ffffff"
-                      fontSize="10"
-                      fontWeight="bold"
+                      fill="#3b3023"
+                      fontSize="11"
+                      fontWeight="600"
                     >
                       {node.stepIndex}
                     </text>
@@ -472,20 +605,36 @@ export default function Canvas({
                   const p = ports[dir];
                   const localX = p.x - node.x;
                   const localY = p.y - node.y;
+                  const isPortHovered = hoveredPort?.nodeId === node.id && hoveredPort?.portDir === dir;
 
                   return (
-                    <circle
-                      key={dir}
-                      cx={localX}
-                      cy={localY}
-                      r="6"
-                      fill="#3b82f6"
-                      stroke="#ffffff"
-                      strokeWidth="2"
-                      onMouseDown={(e) => handlePortMouseDown(e, node, dir)}
-                      onMouseUp={(e) => handlePortMouseUp(e, node, dir)}
-                      className="opacity-0 group-hover:opacity-100 hover:scale-125 transition-all cursor-crosshair"
-                    />
+                    <g key={dir}>
+                      {/* Larger invisible hit area for effortless connection dragging */}
+                      <circle
+                        cx={localX}
+                        cy={localY}
+                        r="12"
+                        fill="transparent"
+                        onMouseEnter={() => setHoveredPort({ nodeId: node.id, portDir: dir })}
+                        onMouseLeave={() => setHoveredPort(null)}
+                        onMouseDown={(e) => handlePortMouseDown(e, node, dir)}
+                        onMouseUp={(e) => handlePortMouseUp(e, node, dir)}
+                        className="cursor-crosshair"
+                      />
+                      <circle
+                        cx={localX}
+                        cy={localY}
+                        r={isPortHovered ? '6.5' : '5'}
+                        fill={isPortHovered ? '#7c6143' : '#f6efe0'}
+                        stroke="#6d5d47"
+                        strokeWidth="1.8"
+                        className={`pointer-events-none transition-opacity ${
+                          connectingFrom || isSelected
+                            ? 'opacity-90'
+                            : 'opacity-0 group-hover:opacity-100'
+                        }`}
+                      />
+                    </g>
                   );
                 })}
               </g>
@@ -497,19 +646,21 @@ export default function Canvas({
   );
 }
 
-// Helper SVG Shape Generator for Node Types
-function renderNodeSvgShape(node, isSelected, theme) {
+// Helper SVG Shape Generator for all 7 Flowchart Node Types
+export function renderNodeSvgShape(node, isSelected, theme) {
   const { width, height, type, fill, stroke } = node;
-  const strokeColor = isSelected ? '#3b82f6' : (stroke || '#64748b');
-  const strokeW = isSelected ? '3' : '2';
-  const shadowFilter = 'drop-shadow(0px 4px 6px rgba(0, 0, 0, 0.3))';
+  const strokeColor = isSelected ? (theme?.accent || '#7a5c3e') : (stroke || '#6d624d');
+  const strokeW = isSelected ? '2.4' : '1.4';
+  const shadowFilter = isSelected
+    ? 'drop-shadow(0px 4px 10px rgba(90, 70, 45, 0.22))'
+    : 'drop-shadow(0px 2px 4px rgba(74, 60, 44, 0.1))';
 
   if (type === 'terminal' || type === 'pill') {
     return (
       <rect
         width={width}
         height={height}
-        rx={height / 2}
+        rx="10"
         fill={fill}
         stroke={strokeColor}
         strokeWidth={strokeW}
@@ -523,6 +674,7 @@ function renderNodeSvgShape(node, isSelected, theme) {
     return (
       <polygon
         points={pts}
+        strokeLinejoin="round"
         fill={fill}
         stroke={strokeColor}
         strokeWidth={strokeW}
@@ -533,7 +685,7 @@ function renderNodeSvgShape(node, isSelected, theme) {
 
   if (type === 'database' || type === 'cylinder') {
     const rx = width / 2;
-    const ry = 12;
+    const ry = 10;
     return (
       <g style={{ filter: shadowFilter }}>
         <path
@@ -558,7 +710,7 @@ function renderNodeSvgShape(node, isSelected, theme) {
   if (type === 'document') {
     return (
       <path
-        d={`M 0 0 H ${width} V ${height - 12} Q ${width * 0.75} ${height} ${width * 0.5} ${height - 10} T 0 ${height - 12} Z`}
+        d={`M 0 0 H ${width} V ${height - 11} Q ${width * 0.75} ${height + 2} ${width * 0.5} ${height - 9} T 0 ${height - 11} Z`}
         fill={fill}
         stroke={strokeColor}
         strokeWidth={strokeW}
@@ -568,11 +720,12 @@ function renderNodeSvgShape(node, isSelected, theme) {
   }
 
   if (type === 'input' || type === 'parallelogram') {
-    const skew = 20;
+    const skew = Math.min(20, width * 0.15);
     const pts = `${skew},0 ${width},0 ${width - skew},${height} 0,${height}`;
     return (
       <polygon
         points={pts}
+        strokeLinejoin="round"
         fill={fill}
         stroke={strokeColor}
         strokeWidth={strokeW}
@@ -587,25 +740,25 @@ function renderNodeSvgShape(node, isSelected, theme) {
         <rect
           width={width}
           height={height}
-          rx="4"
+          rx="6"
           fill={fill}
           stroke={strokeColor}
           strokeWidth={strokeW}
         />
         <path
-          d={`M ${width - 16} ${height} L ${width} ${height - 16} L ${width - 16} ${height - 16} Z`}
-          fill="rgba(0,0,0,0.2)"
+          d={`M ${width - 14} ${height} L ${width} ${height - 14} L ${width - 14} ${height - 14} Z`}
+          fill="rgba(90, 70, 45, 0.22)"
         />
       </g>
     );
   }
 
-  // Default Rectangle
+  // Default Process Rectangle
   return (
     <rect
       width={width}
       height={height}
-      rx="10"
+      rx="9"
       fill={fill}
       stroke={strokeColor}
       strokeWidth={strokeW}

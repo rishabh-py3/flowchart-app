@@ -5,6 +5,8 @@
 @layer base {
   body {
     user-select: none;
+    background-color: #f3ede0;
+    color: #2c251d;
   }
 }
 
@@ -17,11 +19,19 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
+  background: rgba(109, 98, 77, 0.25);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(109, 98, 77, 0.45);
+}
+
+.canvas-grid-parchment {
+  background-color: #f3ede0;
+  background-image:
+    radial-gradient(rgba(109, 98, 77, 0.22) 1px, transparent 1px),
+    radial-gradient(ellipse at center, rgba(255, 252, 245, 0.4) 0%, rgba(222, 210, 188, 0.25) 100%);
+  background-size: 24px 24px, 100% 100%;
 }
 
 .canvas-grid-dots {

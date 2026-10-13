@@ -1,19 +1,66 @@
 import React from 'react';
-import {
-  CircleDot, Square, Diamond, Database, FileText, MoveHorizontal,
-  StickyNote, Layers, HelpCircle, ArrowRight, CornerDownRight, GitCommit
-} from 'lucide-react';
+import { CornerDownRight, GitCommit, ArrowRight } from 'lucide-react';
 import { SHAPE_TYPES } from '../utils/templates';
 
-const ICON_MAP = {
-  CircleDot,
-  Square,
-  Diamond,
-  Database,
-  FileText,
-  MoveHorizontal,
-  StickyNote
-};
+function ShapeMiniature({ id }) {
+  const stroke = '#736049';
+  const fill = 'rgba(229, 217, 195, 0.5)';
+
+  if (id === 'terminal') {
+    return (
+      <svg className="w-8 h-8" viewBox="0 0 36 36">
+        <rect x="4" y="6" width="28" height="24" rx="4" fill={fill} stroke={stroke} strokeWidth="1.4" />
+        <text x="18" y="22" textAnchor="middle" fill="#433627" fontSize="11" fontWeight="600">S</text>
+      </svg>
+    );
+  }
+  if (id === 'process') {
+    return (
+      <svg className="w-8 h-8" viewBox="0 0 36 36">
+        <rect x="4" y="6" width="28" height="24" rx="3" fill={fill} stroke={stroke} strokeWidth="1.4" />
+        <text x="18" y="22" textAnchor="middle" fill="#433627" fontSize="11" fontWeight="600">P</text>
+      </svg>
+    );
+  }
+  if (id === 'decision') {
+    return (
+      <svg className="w-8 h-8" viewBox="0 0 36 36">
+        <polygon points="18,3 33,18 18,33 3,18" fill={fill} stroke={stroke} strokeWidth="1.4" />
+        <text x="18" y="22" textAnchor="middle" fill="#433627" fontSize="10.5" fontWeight="600">D</text>
+      </svg>
+    );
+  }
+  if (id === 'database') {
+    return (
+      <svg className="w-8 h-8" viewBox="0 0 36 36">
+        <path d="M 6 10 v 16 a 12 4.5 0 0 0 24 0 v -16" fill={fill} stroke={stroke} strokeWidth="1.4" />
+        <ellipse cx="18" cy="10" rx="12" ry="4.5" fill={fill} stroke={stroke} strokeWidth="1.4" />
+      </svg>
+    );
+  }
+  if (id === 'document') {
+    return (
+      <svg className="w-8 h-8" viewBox="0 0 36 36">
+        <path d="M 5 6 H 31 V 26 Q 24.5 31 18 26.5 T 5 26 Z" fill={fill} stroke={stroke} strokeWidth="1.4" />
+        <text x="18" y="20" textAnchor="middle" fill="#433627" fontSize="10" fontWeight="600">D</text>
+      </svg>
+    );
+  }
+  if (id === 'input') {
+    return (
+      <svg className="w-8 h-8" viewBox="0 0 36 36">
+        <polygon points="10,7 32,7 26,29 4,29" fill={fill} stroke={stroke} strokeWidth="1.4" />
+      </svg>
+    );
+  }
+  // Sticky Note
+  return (
+    <svg className="w-8 h-8" viewBox="0 0 36 36">
+      <rect x="5" y="5" width="26" height="26" rx="3" fill={fill} stroke={stroke} strokeWidth="1.4" />
+      <path d="M 24 31 L 31 24 L 24 24 Z" fill="rgba(115, 96, 73, 0.35)" />
+    </svg>
+  );
+}
 
 export default function Sidebar({ onAddNode, activeConnectorStyle, setActiveConnectorStyle }) {
   const handleDragStart = (e, shapeItem) => {
@@ -22,93 +69,75 @@ export default function Sidebar({ onAddNode, activeConnectorStyle, setActiveConn
   };
 
   return (
-    <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col z-20 select-none">
-      <div className="p-4 border-b border-slate-800">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-          <Layers className="w-3.5 h-3.5 text-blue-400" />
-          Flow Shapes Library
+    <aside className="w-[248px] bg-[#ede4d3] border-r border-[#d5c7ad] flex flex-col z-20 select-none">
+      <div className="px-5 pt-6 pb-3">
+        <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#4a3e2e]">
+          FLOW SHAPES
         </h2>
-        <p className="text-[11px] text-slate-500 mt-1">Drag or click shapes into your presentation canvas</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {SHAPE_TYPES.map((shape) => {
-          const IconComp = ICON_MAP[shape.icon] || Square;
-          return (
-            <div
-              key={shape.id}
-              draggable
-              onDragStart={(e) => handleDragStart(e, shape)}
-              onClick={() => onAddNode(shape)}
-              className="group flex items-center gap-3 p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/50 hover:border-blue-500/50 cursor-grab active:cursor-grabbing transition shadow-sm"
-            >
-              <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-blue-400 group-hover:text-blue-300 group-hover:scale-110 transition-transform">
-                <IconComp className="w-4 h-4" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
-                  {shape.name}
-                </div>
-                <div className="text-[10px] text-slate-500 capitalize truncate">
-                  {shape.shape} block
-                </div>
+      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2.5">
+        {SHAPE_TYPES.map((shape) => (
+          <div
+            key={shape.id}
+            draggable
+            onDragStart={(e) => handleDragStart(e, shape)}
+            onClick={() => onAddNode(shape)}
+            title={`Click or drag to add ${shape.name}`}
+            className="group flex items-center gap-3.5 px-3.5 py-3 rounded-xl bg-[#f3ecde]/80 hover:bg-[#f8f3e8] border border-[#d6c8b0] hover:border-[#9e8462] cursor-grab active:cursor-grabbing transition-all shadow-[0_1px_2px_rgba(74,60,44,0.04)] hover:shadow-md"
+          >
+            <div className="flex-shrink-0 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <ShapeMiniature id={shape.id} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-medium text-[#3b3023] group-hover:text-[#221b13] truncate">
+                {shape.name}
               </div>
             </div>
-          );
-        })}
+          </div>
+        ))}
 
-        <div className="pt-4 border-t border-slate-800 mt-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-            Connector Line Style
+        {/* Default Connector Style Picker */}
+        <div className="pt-4 mt-4 border-t border-[#d8cbb3]">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6d5d47] mb-2 px-1">
+            Default Flow Line
           </h3>
-          <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-950 rounded-xl border border-slate-800">
+          <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#e3d8c3] rounded-xl border border-[#cfc0a5]">
             <button
               onClick={() => setActiveConnectorStyle('orthogonal')}
-              className={`p-2 rounded-lg text-xs font-medium flex flex-col items-center gap-1 transition ${
+              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium flex flex-col items-center gap-0.5 transition ${
                 activeConnectorStyle === 'orthogonal'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  ? 'bg-[#7c6143] text-[#fdfaf3] shadow-sm'
+                  : 'text-[#5c4d3a] hover:bg-[#d8cbb3]/60'
               }`}
             >
-              <CornerDownRight className="w-4 h-4" />
+              <CornerDownRight className="w-3.5 h-3.5" />
               <span>Step</span>
             </button>
             <button
               onClick={() => setActiveConnectorStyle('curved')}
-              className={`p-2 rounded-lg text-xs font-medium flex flex-col items-center gap-1 transition ${
+              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium flex flex-col items-center gap-0.5 transition ${
                 activeConnectorStyle === 'curved'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  ? 'bg-[#7c6143] text-[#fdfaf3] shadow-sm'
+                  : 'text-[#5c4d3a] hover:bg-[#d8cbb3]/60'
               }`}
             >
-              <GitCommit className="w-4 h-4" />
+              <GitCommit className="w-3.5 h-3.5" />
               <span>Curve</span>
             </button>
             <button
               onClick={() => setActiveConnectorStyle('straight')}
-              className={`p-2 rounded-lg text-xs font-medium flex flex-col items-center gap-1 transition ${
+              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium flex flex-col items-center gap-0.5 transition ${
                 activeConnectorStyle === 'straight'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  ? 'bg-[#7c6143] text-[#fdfaf3] shadow-sm'
+                  : 'text-[#5c4d3a] hover:bg-[#d8cbb3]/60'
               }`}
             >
-              <ArrowRight className="w-4 h-4" />
-              <span>Line</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+              <span>Direct</span>
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Pro Tips Footer */}
-      <div className="p-3 m-3 rounded-xl bg-slate-800/40 border border-slate-700/40 text-[11px] text-slate-400 space-y-1.5">
-        <div className="font-semibold text-slate-300 flex items-center gap-1.5">
-          <HelpCircle className="w-3.5 h-3.5 text-amber-400" /> Quick Tips
-        </div>
-        <ul className="list-disc list-inside space-y-1 text-slate-400 leading-tight">
-          <li>Hover node dot & drag to connect</li>
-          <li>Double-click text to quick edit</li>
-          <li>Drag background to pan view</li>
-        </ul>
       </div>
     </aside>
   );

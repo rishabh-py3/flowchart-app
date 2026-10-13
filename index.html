@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FlowCanvas Studio - Presentation Flowchart Designer</title>
-  
+  <title>FlowCanvas Studio - Flowchart & Process Designer</title>
+
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -14,6 +14,7 @@
         extend: {
           fontFamily: {
             sans: ['Inter', 'system-ui', 'sans-serif'],
+            serif: ['Playfair Display', 'Georgia', 'serif'],
             mono: ['Fira Code', 'monospace']
           }
         }
@@ -24,39 +25,32 @@
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
 
-  <!-- React 18 & Babel CDN -->
+  <!-- React 18 & Babel CDN (for zero-build GitHub Pages deployment) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Lucide Icons CDN -->
-  <script src="https://unpkg.com/lucide@latest"></script>
-
   <style>
-    /* Custom scrollbars */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.2); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.4); }
+    ::-webkit-scrollbar-thumb { background: rgba(109, 98, 77, 0.25); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(109, 98, 77, 0.45); }
 
+    .canvas-grid-parchment {
+      background-color: #f3ede0;
+      background-image:
+        radial-gradient(rgba(109, 98, 77, 0.22) 1px, transparent 1px),
+        radial-gradient(ellipse at center, rgba(255, 252, 245, 0.4) 0%, rgba(222, 210, 188, 0.25) 100%);
+      background-size: 24px 24px, 100% 100%;
+    }
     .canvas-grid-dots {
       background-image: radial-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px);
       background-size: 24px 24px;
     }
     .canvas-grid-light-dots {
       background-image: radial-gradient(rgba(0, 0, 0, 0.15) 1px, transparent 1px);
-      background-size: 24px 24px;
-    }
-    .canvas-grid-lines {
-      background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-                        linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-      background-size: 24px 24px;
-    }
-    .canvas-grid-light-lines {
-      background-image: linear-gradient(to right, rgba(0, 0, 0, 0.06) 1px, transparent 1px),
-                        linear-gradient(to bottom, rgba(0, 0, 0, 0.06) 1px, transparent 1px);
       background-size: 24px 24px;
     }
 
@@ -69,117 +63,217 @@
     }
   </style>
 </head>
-<body class="h-full bg-slate-950 text-slate-100 antialiased overflow-hidden select-none font-sans">
+<body class="h-full bg-[#f3ede0] text-[#2c251d] antialiased overflow-hidden select-none font-sans">
   <div id="root" class="h-full w-full"></div>
 
   <script type="text/babel">
-    const { useState, useRef, useEffect } = React;
+    const { useState, useRef, useEffect, useCallback } = React;
 
-    // --- PRESENTATION THEMES & CONSTANTS ---
+    // --- ZERO-PERSISTENCE MEMORY & STORAGE CLEANUP ON EXIT ---
+    function purgeAllUserDataAndStorage() {
+      try { window.localStorage?.clear(); } catch (e) {}
+      try { window.sessionStorage?.clear(); } catch (e) {}
+      try {
+        if (window.indexedDB && typeof window.indexedDB.databases === 'function') {
+          window.indexedDB.databases().then((dbs) => {
+            dbs.forEach((db) => {
+              if (db && db.name) window.indexedDB.deleteDatabase(db.name);
+            });
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      try {
+        if ('caches' in window) {
+          caches.keys().then((names) => {
+            names.forEach((name) => caches.delete(name));
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      try {
+        if (document.cookie) {
+          document.cookie.split(';').forEach((c) => {
+            document.cookie = c
+              .replace(/^ +/, '')
+              .replace(/=.*/, '=;expires=' + new Date(0).toUTCString() + ';path=/');
+          });
+        }
+      } catch (e) {}
+    }
+
+    // --- THEMES, SHAPES & TEMPLATES ---
     const PRESENTATION_THEMES = [
       {
-        id: 'executive-dark',
-        name: 'Executive Dark',
-        canvasBgClass: 'bg-slate-900 canvas-grid-dots',
-        textDark: false,
-        bgColor: '#0f172a',
+        id: 'atelier-parchment',
+        name: 'Studio Parchment (Default)',
+        bgType: 'parchment-dots',
+        bgColor: '#f3ede0',
+        canvasBgClass: 'bg-[#f3ede0] canvas-grid-parchment',
+        textDark: true,
+        accent: '#7a5c3e',
+        edgeStroke: '#736049',
         nodeColors: {
-          process: { fill: '#1e293b', stroke: '#3b82f6', text: '#f8fafc' },
-          decision: { fill: '#312e81', stroke: '#818cf8', text: '#f8fafc' },
-          terminal: { fill: '#064e3b', stroke: '#34d399', text: '#f8fafc' },
-          database: { fill: '#451a03', stroke: '#fb923c', text: '#f8fafc' },
-          document: { fill: '#371b58', stroke: '#c084fc', text: '#f8fafc' },
-          note: { fill: '#713f12', stroke: '#facc15', text: '#fef08a' }
+          terminal: { fill: '#cbd5b8', stroke: '#6d624d', text: '#2c251d' },
+          process: { fill: '#eadcc5', stroke: '#6d624d', text: '#2c251d' },
+          decision: { fill: '#e3d2b4', stroke: '#6d624d', text: '#2c251d' },
+          database: { fill: '#e4be93', stroke: '#6d624d', text: '#2c251d' },
+          document: { fill: '#dfc8b2', stroke: '#6d624d', text: '#2c251d' },
+          input: { fill: '#eadcc5', stroke: '#6d624d', text: '#2c251d' },
+          note: { fill: '#f2e5bd', stroke: '#8c7651', text: '#2c251d' }
         }
       },
       {
         id: 'clean-light',
-        name: 'Clean Light (Deck ready)',
+        name: 'Clean Light (Deck Ready)',
+        bgType: 'light-dots',
+        bgColor: '#f8fafc',
         canvasBgClass: 'bg-slate-50 canvas-grid-light-dots',
         textDark: true,
-        bgColor: '#f8fafc',
+        accent: '#2563eb',
+        edgeStroke: '#64748b',
         nodeColors: {
+          terminal: { fill: '#dcfce7', stroke: '#16a34a', text: '#14532d' },
           process: { fill: '#ffffff', stroke: '#2563eb', text: '#0f172a' },
           decision: { fill: '#eff6ff', stroke: '#3b82f6', text: '#1e3a8a' },
-          terminal: { fill: '#f0fdf4', stroke: '#16a34a', text: '#14532d' },
-          database: { fill: '#fff7ed', stroke: '#ea580c', text: '#7c2d12' },
-          document: { fill: '#faf5ff', stroke: '#9333ea', text: '#581c87' },
-          note: { fill: '#fefce8', stroke: '#ca8a04', text: '#713f12' }
+          database: { fill: '#ffedd5', stroke: '#ea580c', text: '#7c2d12' },
+          document: { fill: '#f3e8ff', stroke: '#9333ea', text: '#581c87' },
+          input: { fill: '#e0f2fe', stroke: '#0284c7', text: '#0c4a6e' },
+          note: { fill: '#fef9c3', stroke: '#ca8a04', text: '#713f12' }
         }
       },
       {
-        id: 'cyber-neon',
-        name: 'Vibrant Cyber Neon',
-        canvasBgClass: 'bg-zinc-950 canvas-grid-lines',
+        id: 'executive-dark',
+        name: 'Executive Dark',
+        bgType: 'dots',
+        bgColor: '#0f172a',
+        canvasBgClass: 'bg-slate-900 canvas-grid-dots',
         textDark: false,
-        bgColor: '#050515',
+        accent: '#3b82f6',
+        edgeStroke: '#94a3b8',
         nodeColors: {
-          process: { fill: '#090d16', stroke: '#06b6d4', text: '#e0f2fe' },
-          decision: { fill: '#160d29', stroke: '#d946ef', text: '#fae8ff' },
-          terminal: { fill: '#051b14', stroke: '#10b981', text: '#d1fae5' },
-          database: { fill: '#1f1300', stroke: '#f59e0b', text: '#fef3c7' },
-          document: { fill: '#1a0928', stroke: '#a855f7', text: '#f3e8ff' },
-          note: { fill: '#241a02', stroke: '#eab308', text: '#fef9c3' }
+          terminal: { fill: '#064e3b', stroke: '#34d399', text: '#f8fafc' },
+          process: { fill: '#1e293b', stroke: '#3b82f6', text: '#f8fafc' },
+          decision: { fill: '#312e81', stroke: '#818cf8', text: '#f8fafc' },
+          database: { fill: '#451a03', stroke: '#fb923c', text: '#f8fafc' },
+          document: { fill: '#371b58', stroke: '#c084fc', text: '#f8fafc' },
+          input: { fill: '#164e63', stroke: '#22d3ee', text: '#f8fafc' },
+          note: { fill: '#713f12', stroke: '#facc15', text: '#fef08a' }
         }
       }
     ];
 
     const SHAPE_TYPES = [
-      { id: 'terminal', name: 'Start / End', icon: 'circle-dot', defaultWidth: 140, defaultHeight: 60, shape: 'pill' },
-      { id: 'process', name: 'Process Block', icon: 'square', defaultWidth: 160, defaultHeight: 80, shape: 'rectangle' },
-      { id: 'decision', name: 'Decision Point', icon: 'diamond', defaultWidth: 150, defaultHeight: 100, shape: 'diamond' },
-      { id: 'database', name: 'Database', icon: 'database', defaultWidth: 140, defaultHeight: 90, shape: 'cylinder' },
-      { id: 'document', name: 'Document', icon: 'file-text', defaultWidth: 150, defaultHeight: 85, shape: 'document' },
-      { id: 'input', name: 'Input / Output', icon: 'move-horizontal', defaultWidth: 160, defaultHeight: 70, shape: 'parallelogram' },
-      { id: 'note', name: 'Sticky Note', icon: 'sticky-note', defaultWidth: 150, defaultHeight: 110, shape: 'note' }
+      { id: 'terminal', name: 'Start / End', defaultWidth: 150, defaultHeight: 74, shape: 'pill' },
+      { id: 'process', name: 'Process Block', defaultWidth: 160, defaultHeight: 74, shape: 'rectangle' },
+      { id: 'decision', name: 'Decision Point', defaultWidth: 155, defaultHeight: 115, shape: 'diamond' },
+      { id: 'database', name: 'Database', defaultWidth: 150, defaultHeight: 82, shape: 'cylinder' },
+      { id: 'document', name: 'Document', defaultWidth: 150, defaultHeight: 80, shape: 'document' },
+      { id: 'input', name: 'Input / Output', defaultWidth: 160, defaultHeight: 74, shape: 'parallelogram' },
+      { id: 'note', name: 'Sticky Note', defaultWidth: 150, defaultHeight: 95, shape: 'note' }
+    ];
+
+    const COLOR_PRESETS = [
+      { fill: '#cbd5b8', stroke: '#6d624d', text: '#2c251d', name: 'Sage Olive' },
+      { fill: '#eadcc5', stroke: '#6d624d', text: '#2c251d', name: 'Warm Cream' },
+      { fill: '#e3d2b4', stroke: '#6d624d', text: '#2c251d', name: 'Sand Gold' },
+      { fill: '#e4be93', stroke: '#6d624d', text: '#2c251d', name: 'Ochre Amber' },
+      { fill: '#dcab91', stroke: '#6d624d', text: '#2c251d', name: 'Terracotta' },
+      { fill: '#dfc8b2', stroke: '#6d624d', text: '#2c251d', name: 'Muted Clay' },
+      { fill: '#f2e5bd', stroke: '#8c7651', text: '#2c251d', name: 'Parchment Note' },
+      { fill: '#c8d6df', stroke: '#5a6b78', text: '#202a30', name: 'Slate Mist' }
     ];
 
     const PRESET_TEMPLATES = [
       {
         id: 'user-auth-flow',
         name: 'User Authentication Flow',
-        description: 'Standard login, validation, and session creation flowchart for technical slides.',
+        description: 'Standard login, validation, profile fetch, and error handling workflow.',
         nodes: [
-          { id: 'n1', type: 'terminal', label: 'User Opens App', x: 100, y: 220, width: 150, height: 60, fill: '#064e3b', stroke: '#34d399', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '600', stepIndex: 1 },
-          { id: 'n2', type: 'input', label: 'Enter Credentials', x: 310, y: 215, width: 160, height: 70, fill: '#1e293b', stroke: '#3b82f6', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '500', stepIndex: 2 },
-          { id: 'n3', type: 'decision', label: 'Valid Login?', x: 530, y: 200, width: 150, height: 100, fill: '#312e81', stroke: '#818cf8', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '600', stepIndex: 3 },
-          { id: 'n4', type: 'database', label: 'Fetch Profile', x: 740, y: 210, width: 140, height: 80, fill: '#451a03', stroke: '#fb923c', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '500', stepIndex: 4 },
-          { id: 'n5', type: 'terminal', label: 'Grant Access', x: 940, y: 220, width: 150, height: 60, fill: '#064e3b', stroke: '#34d399', text: '#f8fafc', font: 'Inter', fontSize: 14, fontWeight: '600', stepIndex: 5 },
-          { id: 'n6', type: 'process', label: 'Show Error Alert', x: 520, y: 370, width: 170, height: 75, fill: '#881337', stroke: '#f43f5e', text: '#ffe4e6', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 6 }
+          { id: 'n1', type: 'terminal', label: 'User Opens App', x: 90, y: 220, width: 155, height: 76, fill: '#cbd5b8', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 1 },
+          { id: 'n2', type: 'process', label: 'Enter Credentials', x: 315, y: 220, width: 160, height: 76, fill: '#eadcc5', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 2 },
+          { id: 'n3', type: 'decision', label: 'Valid Login?', x: 560, y: 196, width: 156, height: 124, fill: '#e3d2b4', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 3 },
+          { id: 'n4', type: 'database', label: 'Fetch Profile', x: 800, y: 220, width: 155, height: 78, fill: '#e4be93', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 4 },
+          { id: 'n5', type: 'process', label: 'Show Error Alert', x: 560, y: 390, width: 156, height: 76, fill: '#dcab91', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 5 },
+          { id: 'n6', type: 'terminal', label: 'Success Access', x: 1030, y: 220, width: 150, height: 76, fill: '#cbd5b8', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 6 }
         ],
         edges: [
-          { id: 'e1', from: 'n1', to: 'n2', label: '', style: 'orthogonal' },
-          { id: 'e2', from: 'n2', to: 'n3', label: 'Submit', style: 'orthogonal' },
-          { id: 'e3', from: 'n3', to: 'n4', label: 'Yes', style: 'orthogonal' },
-          { id: 'e4', from: 'n4', to: 'n5', label: 'Success', style: 'orthogonal' },
-          { id: 'e5', from: 'n3', to: 'n6', label: 'No', style: 'orthogonal' }
+          { id: 'e1', from: 'n1', to: 'n2', fromPort: 'right', toPort: 'left', label: '', style: 'orthogonal', arrow: 'end' },
+          { id: 'e2', from: 'n2', to: 'n3', fromPort: 'right', toPort: 'left', label: 'Submit', style: 'orthogonal', arrow: 'end' },
+          { id: 'e3', from: 'n3', to: 'n4', fromPort: 'right', toPort: 'left', label: 'Yes', style: 'orthogonal', arrow: 'end' },
+          { id: 'e4', from: 'n4', to: 'n6', fromPort: 'right', toPort: 'left', label: 'Success', style: 'orthogonal', arrow: 'end' },
+          { id: 'e5', from: 'n3', to: 'n5', fromPort: 'bottom', toPort: 'top', label: 'No', style: 'orthogonal', arrow: 'end' }
         ]
       },
       {
-        id: 'sales-pipeline',
+        id: 'sales-lead-qualification',
         name: 'Sales Lead Qualification Pipeline',
         description: 'Executive overview of lead ingestion, evaluation, and account assignment.',
         nodes: [
-          { id: 'm1', type: 'terminal', label: 'Inbound Lead', x: 120, y: 180, width: 150, height: 60, fill: '#0284c7', stroke: '#38bdf8', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '600', stepIndex: 1 },
-          { id: 'm2', type: 'decision', label: 'Size > 100?', x: 330, y: 160, width: 150, height: 100, fill: '#4338ca', stroke: '#818cf8', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '600', stepIndex: 2 },
-          { id: 'm3', type: 'process', label: 'Assign Enterprise AE', x: 550, y: 110, width: 170, height: 75, fill: '#047857', stroke: '#34d399', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '600', stepIndex: 3 },
-          { id: 'm4', type: 'process', label: 'Route SMB Nurture', x: 550, y: 250, width: 170, height: 75, fill: '#b45309', stroke: '#fbbf24', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '500', stepIndex: 4 },
-          { id: 'm5', type: 'document', label: 'Send Demo Deck', x: 770, y: 110, width: 150, height: 75, fill: '#6b21a8', stroke: '#c084fc', text: '#ffffff', font: 'Outfit', fontSize: 14, fontWeight: '500', stepIndex: 5 }
+          { id: 'm1', type: 'terminal', label: 'Inbound Lead', x: 100, y: 210, width: 155, height: 74, fill: '#cbd5b8', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 1 },
+          { id: 'm2', type: 'input', label: 'Capture Form Data', x: 320, y: 210, width: 170, height: 74, fill: '#eadcc5', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 2 },
+          { id: 'm3', type: 'decision', label: 'Size > 100?', x: 560, y: 185, width: 156, height: 124, fill: '#e3d2b4', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 3 },
+          { id: 'm4', type: 'process', label: 'Assign Enterprise AE', x: 800, y: 120, width: 175, height: 76, fill: '#e4be93', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 4 },
+          { id: 'm5', type: 'process', label: 'Route SMB Nurture', x: 800, y: 295, width: 175, height: 76, fill: '#dcab91', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 5 },
+          { id: 'm6', type: 'document', label: 'Send Proposal Deck', x: 1045, y: 120, width: 170, height: 80, fill: '#dfc8b2', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 6 }
         ],
         edges: [
-          { id: 'ge1', from: 'm1', to: 'm2', label: 'Form Submit', style: 'curved' },
-          { id: 'ge2', from: 'm2', to: 'm3', label: 'Yes', style: 'orthogonal' },
-          { id: 'ge3', from: 'm2', to: 'm4', label: 'No', style: 'orthogonal' },
-          { id: 'ge4', from: 'm3', to: 'm5', label: 'Qualify', style: 'straight' }
+          { id: 'ge1', from: 'm1', to: 'm2', fromPort: 'right', toPort: 'left', label: '', style: 'orthogonal', arrow: 'end' },
+          { id: 'ge2', from: 'm2', to: 'm3', fromPort: 'right', toPort: 'left', label: 'Evaluate', style: 'orthogonal', arrow: 'end' },
+          { id: 'ge3', from: 'm3', to: 'm4', fromPort: 'top', toPort: 'left', label: 'Yes', style: 'orthogonal', arrow: 'end' },
+          { id: 'ge4', from: 'm3', to: 'm5', fromPort: 'bottom', toPort: 'left', label: 'No', style: 'orthogonal', arrow: 'end' },
+          { id: 'ge5', from: 'm4', to: 'm6', fromPort: 'right', toPort: 'left', label: 'Qualified', style: 'orthogonal', arrow: 'end' }
+        ]
+      },
+      {
+        id: 'order-fulfillment',
+        name: 'E-Commerce Order Fulfillment',
+        description: 'End-to-end payment verification, inventory check, and shipment dispatch flow.',
+        nodes: [
+          { id: 'o1', type: 'terminal', label: 'Order Placed', x: 90, y: 210, width: 150, height: 72, fill: '#cbd5b8', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 1 },
+          { id: 'o2', type: 'decision', label: 'In Stock?', x: 310, y: 184, width: 156, height: 124, fill: '#e3d2b4', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 2 },
+          { id: 'o3', type: 'process', label: 'Charge Card', x: 545, y: 210, width: 155, height: 72, fill: '#eadcc5', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 3 },
+          { id: 'o4', type: 'document', label: 'Generate Invoice', x: 775, y: 207, width: 165, height: 78, fill: '#dfc8b2', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 4 },
+          { id: 'o5', type: 'terminal', label: 'Ship Package', x: 1010, y: 210, width: 155, height: 72, fill: '#cbd5b8', stroke: '#6d624d', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 5 },
+          { id: 'o6', type: 'note', label: 'Notify Backorder Waitlist', x: 310, y: 375, width: 156, height: 84, fill: '#f2e5bd', stroke: '#8c7651', text: '#2c251d', font: 'Inter', fontSize: 13, fontWeight: '500', stepIndex: 6 }
+        ],
+        edges: [
+          { id: 'oe1', from: 'o1', to: 'o2', fromPort: 'right', toPort: 'left', label: '', style: 'orthogonal', arrow: 'end' },
+          { id: 'oe2', from: 'o2', to: 'o3', fromPort: 'right', toPort: 'left', label: 'Yes', style: 'orthogonal', arrow: 'end' },
+          { id: 'oe3', from: 'o3', to: 'o4', fromPort: 'right', toPort: 'left', label: 'Paid', style: 'orthogonal', arrow: 'end' },
+          { id: 'oe4', from: 'o4', to: 'o5', fromPort: 'right', toPort: 'left', label: 'Dispatch', style: 'orthogonal', arrow: 'end' },
+          { id: 'oe5', from: 'o2', to: 'o6', fromPort: 'bottom', toPort: 'top', label: 'No', style: 'orthogonal', arrow: 'end' }
         ]
       }
     ];
 
-    // --- GEOMETRY HELPERS ---
+    // --- GEOMETRY & AUTO-FIT NODE SIZING HELPERS ---
     function getNodePorts(node) {
-      const { x, y, width, height } = node;
-      const centerX = x + width / 2;
-      const centerY = y + height / 2;
+      const { x, y, width, height, type } = node;
+      const halfW = width / 2;
+      const halfH = height / 2;
+      const centerX = x + halfW;
+      const centerY = y + halfH;
+
+      if (type === 'input' || type === 'parallelogram') {
+        const skew = Math.min(20, width * 0.15);
+        return {
+          top: { x: centerX, y: y, dir: 'top' },
+          right: { x: x + width - skew / 2, y: centerY, dir: 'right' },
+          bottom: { x: centerX, y: y + height, dir: 'bottom' },
+          left: { x: x + skew / 2, y: centerY, dir: 'left' },
+          center: { x: centerX, y: centerY, dir: 'center' }
+        };
+      }
+
+      if (type === 'document') {
+        return {
+          top: { x: centerX, y: y, dir: 'top' },
+          right: { x: x + width, y: centerY - 3, dir: 'right' },
+          bottom: { x: centerX, y: y + height - 6, dir: 'bottom' },
+          left: { x: x, y: centerY - 3, dir: 'left' },
+          center: { x: centerX, y: centerY, dir: 'center' }
+        };
+      }
+
       return {
         top: { x: centerX, y: y, dir: 'top' },
         right: { x: x + width, y: centerY, dir: 'right' },
@@ -189,71 +283,516 @@
       };
     }
 
-    function getBestPortPair(sNode, tNode) {
-      const sPorts = getNodePorts(sNode);
-      const tPorts = getNodePorts(tNode);
-      const keys = ['top', 'right', 'bottom', 'left'];
-      let minDist = Infinity;
-      let bestPair = { fromPort: sPorts.right, toPort: tPorts.left };
+    function getBestPortPair(sourceNode, targetNode, edge = null) {
+      const sPorts = getNodePorts(sourceNode);
+      const tPorts = getNodePorts(targetNode);
 
-      keys.forEach(sk => {
-        keys.forEach(tk => {
-          const sp = sPorts[sk];
-          const tp = tPorts[tk];
+      if (edge && edge.fromPort && edge.toPort && sPorts[edge.fromPort] && tPorts[edge.toPort]) {
+        return {
+          fromPort: sPorts[edge.fromPort],
+          toPort: tPorts[edge.toPort],
+          fromDir: edge.fromPort,
+          toDir: edge.toPort
+        };
+      }
+
+      const sCenter = sPorts.center;
+      const tCenter = tPorts.center;
+      const dx = tCenter.x - sCenter.x;
+      const dy = tCenter.y - sCenter.y;
+
+      const portKeys = ['top', 'right', 'bottom', 'left'];
+      let bestScore = Infinity;
+      let bestPair = { fromPort: sPorts.right, toPort: tPorts.left, fromDir: 'right', toDir: 'left' };
+
+      portKeys.forEach(sKey => {
+        portKeys.forEach(tKey => {
+          if (sourceNode.id === targetNode.id && sKey === tKey) return;
+          const sp = sPorts[sKey];
+          const tp = tPorts[tKey];
           const dist = Math.hypot(tp.x - sp.x, tp.y - sp.y);
-          if (dist < minDist) {
-            minDist = dist;
-            bestPair = { fromPort: sp, toPort: tp };
+
+          let penalty = 0;
+          if (sKey === 'right' && dx < -20) penalty += 120;
+          if (sKey === 'left' && dx > 20) penalty += 120;
+          if (sKey === 'bottom' && dy < -20) penalty += 120;
+          if (sKey === 'top' && dy > 20) penalty += 120;
+
+          if (tKey === 'left' && dx < -20) penalty += 120;
+          if (tKey === 'right' && dx > 20) penalty += 120;
+          if (tKey === 'top' && dy < -20) penalty += 120;
+          if (tKey === 'bottom' && dy > 20) penalty += 120;
+
+          const isNaturalOpposite =
+            (sKey === 'right' && tKey === 'left' && dx >= 0) ||
+            (sKey === 'left' && tKey === 'right' && dx <= 0) ||
+            (sKey === 'bottom' && tKey === 'top' && dy >= 0) ||
+            (sKey === 'top' && tKey === 'bottom' && dy <= 0);
+
+          if (isNaturalOpposite) penalty -= 35;
+
+          const score = dist + penalty;
+          if (score < bestScore) {
+            bestScore = score;
+            bestPair = {
+              fromPort: edge?.fromPort && sPorts[edge.fromPort] ? sPorts[edge.fromPort] : sp,
+              toPort: edge?.toPort && tPorts[edge.toPort] ? tPorts[edge.toPort] : tp,
+              fromDir: edge?.fromPort || sKey,
+              toDir: edge?.toPort || tKey
+            };
           }
         });
       });
+
       return bestPair;
     }
 
-    function calculatePathData(fromP, toP, style = 'orthogonal') {
-      const { x: x1, y: y1, dir: dir1 = 'right' } = fromP;
-      const { x: x2, y: y2, dir: dir2 = 'left' } = toP;
+    function stepPort(pt, dist = 24) {
+      if (pt.dir === 'right') return { x: pt.x + dist, y: pt.y };
+      if (pt.dir === 'left') return { x: pt.x - dist, y: pt.y };
+      if (pt.dir === 'bottom') return { x: pt.x, y: pt.y + dist };
+      if (pt.dir === 'top') return { x: pt.x, y: pt.y - dist };
+      return { x: pt.x, y: pt.y };
+    }
+
+    function buildRoundedOrthogonalPath(points, radius = 8) {
+      if (points.length < 2) return '';
+      if (points.length === 2) {
+        return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+      }
+
+      const pts = [points[0]];
+      for (let i = 1; i < points.length; i++) {
+        if (Math.hypot(points[i].x - pts[pts.length - 1].x, points[i].y - pts[pts.length - 1].y) > 0.5) {
+          pts.push(points[i]);
+        }
+      }
+      if (pts.length === 1) return `M ${pts[0].x} ${pts[0].y}`;
+      if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+
+      let d = `M ${pts[0].x} ${pts[0].y}`;
+      for (let i = 1; i < pts.length - 1; i++) {
+        const prev = pts[i - 1];
+        const curr = pts[i];
+        const next = pts[i + 1];
+
+        const v1x = curr.x - prev.x;
+        const v1y = curr.y - prev.y;
+        const len1 = Math.hypot(v1x, v1y);
+
+        const v2x = next.x - curr.x;
+        const v2y = next.y - curr.y;
+        const len2 = Math.hypot(v2x, v2y);
+
+        const r = Math.min(radius, len1 / 2, len2 / 2);
+        if (r < 1) {
+          d += ` L ${curr.x} ${curr.y}`;
+        } else {
+          const startX = curr.x - (v1x / len1) * r;
+          const startY = curr.y - (v1y / len1) * r;
+          const endX = curr.x + (v2x / len2) * r;
+          const endY = curr.y + (v2y / len2) * r;
+          d += ` L ${startX.toFixed(1)} ${startY.toFixed(1)} Q ${curr.x.toFixed(1)} ${curr.y.toFixed(1)} ${endX.toFixed(1)} ${endY.toFixed(1)}`;
+        }
+      }
+      const last = pts[pts.length - 1];
+      d += ` L ${last.x} ${last.y}`;
+      return d;
+    }
+
+    function calculatePathData(fromPoint, toPoint, style = 'orthogonal') {
+      const { x: x1, y: y1, dir: dir1 = 'right' } = fromPoint;
+      const { x: x2, y: y2, dir: dir2 = 'left' } = toPoint;
 
       if (style === 'straight') {
-        return { d: `M ${x1} ${y1} L ${x2} ${y2}`, midPoint: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 } };
+        return {
+          d: `M ${x1} ${y1} L ${x2} ${y2}`,
+          midPoint: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
+        };
       }
-      if (style === 'curved') {
-        let dx = Math.abs(x2 - x1) / 2;
-        let dy = Math.abs(y2 - y1) / 2;
-        let cx1 = x1, cy1 = y1, cx2 = x2, cy2 = y2;
-        if (dir1 === 'right') cx1 += Math.max(dx, 40);
-        else if (dir1 === 'left') cx1 -= Math.max(dx, 40);
-        else if (dir1 === 'bottom') cy1 += Math.max(dy, 40);
-        else if (dir1 === 'top') cy1 -= Math.max(dy, 40);
 
-        if (dir2 === 'right') cx2 += Math.max(dx, 40);
-        else if (dir2 === 'left') cx2 -= Math.max(dx, 40);
-        else if (dir2 === 'bottom') cy2 += Math.max(dy, 40);
-        else if (dir2 === 'top') cy2 -= Math.max(dy, 40);
+      if (style === 'curved') {
+        const dist = Math.hypot(x2 - x1, y2 - y1);
+        const offset = Math.max(Math.min(dist * 0.45, 140), 40);
+        let cx1 = x1, cy1 = y1, cx2 = x2, cy2 = y2;
+
+        if (dir1 === 'right') cx1 += offset;
+        else if (dir1 === 'left') cx1 -= offset;
+        else if (dir1 === 'bottom') cy1 += offset;
+        else if (dir1 === 'top') cy1 -= offset;
+
+        if (dir2 === 'right') cx2 += offset;
+        else if (dir2 === 'left') cx2 -= offset;
+        else if (dir2 === 'bottom') cy2 += offset;
+        else if (dir2 === 'top') cy2 -= offset;
+        else {
+          cx2 = (x1 + x2) / 2;
+          cy2 = (y1 + y2) / 2;
+        }
 
         const midPoint = {
           x: 0.125 * x1 + 0.375 * cx1 + 0.375 * cx2 + 0.125 * x2,
           y: 0.125 * y1 + 0.375 * cy1 + 0.375 * cy2 + 0.125 * y2
         };
-        return { d: `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`, midPoint };
+
+        return {
+          d: `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`,
+          midPoint
+        };
       }
 
-      // Orthogonal
-      let midX = (x1 + x2) / 2;
-      let midY = (y1 + y2) / 2;
-      let pathString = `M ${x1} ${y1} `;
-      if (dir1 === 'left' || dir1 === 'right') {
-        pathString += `L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
+      const isHoriz1 = dir1 === 'left' || dir1 === 'right';
+      const isHoriz2 = dir2 === 'left' || dir2 === 'right' || dir2 === 'center';
+
+      const margin = 22;
+      const p1 = { x: x1, y: y1 };
+      const p2 = { x: x2, y: y2 };
+      const s1 = stepPort(fromPoint, margin);
+      const s2 = dir2 === 'center' ? p2 : stepPort(toPoint, margin);
+
+      let points = [];
+
+      if (dir2 === 'center') {
+        if (isHoriz1) {
+          const midX = (x1 + x2) / 2;
+          points = [p1, { x: midX, y: y1 }, { x: midX, y: y2 }, p2];
+        } else {
+          const midY = (y1 + y2) / 2;
+          points = [p1, { x: x1, y: midY }, { x: x2, y: midY }, p2];
+        }
+      } else if (isHoriz1 && isHoriz2) {
+        const canGoDirectMid =
+          (dir1 === 'right' && dir2 === 'left' && x2 >= x1 + 10) ||
+          (dir1 === 'left' && dir2 === 'right' && x2 <= x1 - 10);
+
+        if (canGoDirectMid) {
+          const midX = (x1 + x2) / 2;
+          points = [p1, { x: midX, y: y1 }, { x: midX, y: y2 }, p2];
+        } else {
+          const midY = (y1 + y2) / 2;
+          points = [p1, s1, { x: s1.x, y: midY }, { x: s2.x, y: midY }, s2, p2];
+        }
+      } else if (!isHoriz1 && !isHoriz2) {
+        const canGoDirectMid =
+          (dir1 === 'bottom' && dir2 === 'top' && y2 >= y1 + 10) ||
+          (dir1 === 'top' && dir2 === 'bottom' && y2 <= y1 - 10);
+
+        if (canGoDirectMid) {
+          const midY = (y1 + y2) / 2;
+          points = [p1, { x: x1, y: midY }, { x: x2, y: midY }, p2];
+        } else {
+          const midX = (x1 + x2) / 2;
+          points = [p1, s1, { x: midX, y: s1.y }, { x: midX, y: s2.y }, s2, p2];
+        }
+      } else if (isHoriz1 && !isHoriz2) {
+        const dir1Ok = (dir1 === 'right' && x2 >= s1.x) || (dir1 === 'left' && x2 <= s1.x);
+        const dir2Ok = (dir2 === 'top' && y1 <= s2.y) || (dir2 === 'bottom' && y1 >= s2.y);
+
+        if (dir1Ok && dir2Ok) {
+          points = [p1, { x: x2, y: y1 }, p2];
+        } else {
+          points = [p1, s1, { x: s1.x, y: s2.y }, s2, p2];
+        }
       } else {
-        pathString += `L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`;
+        const dir1Ok = (dir1 === 'bottom' && y2 >= s1.y) || (dir1 === 'top' && y2 <= s1.y);
+        const dir2Ok = (dir2 === 'left' && x1 <= s2.x) || (dir2 === 'right' && x1 >= s2.x);
+
+        if (dir1Ok && dir2Ok) {
+          points = [p1, { x: x1, y: y2 }, p2];
+        } else {
+          points = [p1, s1, { x: s2.x, y: s1.y }, s2, p2];
+        }
       }
-      return { d: pathString, midPoint: { x: midX, y: midY } };
+
+      let totalLen = 0;
+      const segLens = [];
+      for (let i = 1; i < points.length; i++) {
+        const l = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+        segLens.push(l);
+        totalLen += l;
+      }
+
+      let midPoint = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+      let halfLen = totalLen / 2;
+      let accum = 0;
+      for (let i = 0; i < segLens.length; i++) {
+        if (accum + segLens[i] >= halfLen && segLens[i] > 0) {
+          const t = (halfLen - accum) / segLens[i];
+          midPoint = {
+            x: points[i].x + (points[i + 1].x - points[i].x) * t,
+            y: points[i].y + (points[i + 1].y - points[i].y) * t
+          };
+          break;
+        }
+        accum += segLens[i];
+      }
+
+      return {
+        d: buildRoundedOrthogonalPath(points, 8),
+        midPoint
+      };
     }
 
-    // --- MAIN APP COMPONENT ---
+    function computeAutoNodeLayout(node) {
+      const label = (node.label ?? '').toString();
+      const fontSize = node.fontSize || 13;
+      const type = node.type || 'process';
+
+      const minDims = {
+        terminal: { w: 130, h: 54 },
+        process: { w: 145, h: 68 },
+        decision: { w: 145, h: 100 },
+        database: { w: 135, h: 86 },
+        document: { w: 145, h: 80 },
+        input: { w: 155, h: 66 },
+        note: { w: 145, h: 96 }
+      }[type] || { w: 145, h: 68 };
+
+      const shapeFactor = {
+        terminal: { padX: 36, padY: 26, scaleW: 1.0, scaleH: 1.0, maxCharsPerLine: 22 },
+        process: { padX: 28, padY: 26, scaleW: 1.0, scaleH: 1.0, maxCharsPerLine: 22 },
+        decision: { padX: 36, padY: 32, scaleW: 1.65, scaleH: 1.65, maxCharsPerLine: 16 },
+        database: { padX: 28, padY: 42, scaleW: 1.0, scaleH: 1.0, maxCharsPerLine: 20 },
+        document: { padX: 28, padY: 36, scaleW: 1.0, scaleH: 1.0, maxCharsPerLine: 20 },
+        input: { padX: 48, padY: 26, scaleW: 1.0, scaleH: 1.0, maxCharsPerLine: 20 },
+        note: { padX: 28, padY: 28, scaleW: 1.0, scaleH: 1.0, maxCharsPerLine: 22 }
+      }[type] || { padX: 28, padY: 26, scaleW: 1.0, scaleH: 1.0, maxCharsPerLine: 22 };
+
+      const rawParagraphs = label.split('\n');
+      const lines = [];
+      const targetWrapChars = Math.max(
+        shapeFactor.maxCharsPerLine,
+        Math.ceil(Math.sqrt(label.length) * 2.4)
+      );
+
+      rawParagraphs.forEach(para => {
+        const words = para.trim().split(/\s+/).filter(Boolean);
+        if (words.length === 0) {
+          lines.push('');
+          return;
+        }
+        let currentLine = words[0];
+        for (let i = 1; i < words.length; i++) {
+          const word = words[i];
+          if ((currentLine + ' ' + word).length <= targetWrapChars) {
+            currentLine += ' ' + word;
+          } else {
+            lines.push(currentLine);
+            currentLine = word;
+          }
+        }
+        lines.push(currentLine);
+      });
+
+      if (lines.length === 0) lines.push('');
+
+      const charWidth = fontSize * 0.6;
+      const lineHeight = Math.round(fontSize * 1.35);
+
+      const longestLineChars = Math.max(...lines.map(l => l.length), 1);
+      const textBlockWidth = longestLineChars * charWidth;
+      const textBlockHeight = lines.length * lineHeight;
+
+      const requiredWidth = Math.ceil(textBlockWidth * shapeFactor.scaleW + shapeFactor.padX);
+      const requiredHeight = Math.ceil(textBlockHeight * shapeFactor.scaleH + shapeFactor.padY);
+
+      const finalWidth = Math.max(minDims.w, requiredWidth, node.manualMinWidth || 0);
+      const finalHeight = Math.max(minDims.h, requiredHeight, node.manualMinHeight || 0);
+
+      return {
+        width: finalWidth,
+        height: finalHeight,
+        lines,
+        lineHeight
+      };
+    }
+
+    function renderNodeSvgShape(node, isSelected, theme) {
+      const { width, height, type, fill, stroke } = node;
+      const strokeColor = isSelected ? (theme?.accent || '#7a5c3e') : (stroke || '#6d624d');
+      const strokeW = isSelected ? '2.4' : '1.4';
+      const shadowFilter = isSelected
+        ? 'drop-shadow(0px 4px 10px rgba(90, 70, 45, 0.22))'
+        : 'drop-shadow(0px 2px 4px rgba(74, 60, 44, 0.1))';
+
+      if (type === 'terminal' || type === 'pill') {
+        return (
+          <rect
+            width={width}
+            height={height}
+            rx="10"
+            fill={fill}
+            stroke={strokeColor}
+            strokeWidth={strokeW}
+            style={{ filter: shadowFilter }}
+          />
+        );
+      }
+
+      if (type === 'decision' || type === 'diamond') {
+        const pts = `${width / 2},0 ${width},${height / 2} ${width / 2},${height} 0,${height / 2}`;
+        return (
+          <polygon
+            points={pts}
+            strokeLinejoin="round"
+            fill={fill}
+            stroke={strokeColor}
+            strokeWidth={strokeW}
+            style={{ filter: shadowFilter }}
+          />
+        );
+      }
+
+      if (type === 'database' || type === 'cylinder') {
+        const rx = width / 2;
+        const ry = 10;
+        return (
+          <g style={{ filter: shadowFilter }}>
+            <path
+              d={`M 0 ${ry} v ${height - 2 * ry} a ${rx} ${ry} 0 0 0 ${width} 0 v -${height - 2 * ry}`}
+              fill={fill}
+              stroke={strokeColor}
+              strokeWidth={strokeW}
+            />
+            <ellipse
+              cx={rx}
+              cy={ry}
+              rx={rx}
+              ry={ry}
+              fill={fill}
+              stroke={strokeColor}
+              strokeWidth={strokeW}
+            />
+          </g>
+        );
+      }
+
+      if (type === 'document') {
+        return (
+          <path
+            d={`M 0 0 H ${width} V ${height - 11} Q ${width * 0.75} ${height + 2} ${width * 0.5} ${height - 9} T 0 ${height - 11} Z`}
+            fill={fill}
+            stroke={strokeColor}
+            strokeWidth={strokeW}
+            style={{ filter: shadowFilter }}
+          />
+        );
+      }
+
+      if (type === 'input' || type === 'parallelogram') {
+        const skew = Math.min(20, width * 0.15);
+        const pts = `${skew},0 ${width},0 ${width - skew},${height} 0,${height}`;
+        return (
+          <polygon
+            points={pts}
+            strokeLinejoin="round"
+            fill={fill}
+            stroke={strokeColor}
+            strokeWidth={strokeW}
+            style={{ filter: shadowFilter }}
+          />
+        );
+      }
+
+      if (type === 'note') {
+        return (
+          <g style={{ filter: shadowFilter }}>
+            <rect
+              width={width}
+              height={height}
+              rx="6"
+              fill={fill}
+              stroke={strokeColor}
+              strokeWidth={strokeW}
+            />
+            <path
+              d={`M ${width - 14} ${height} L ${width} ${height - 14} L ${width - 14} ${height - 14} Z`}
+              fill="rgba(90, 70, 45, 0.22)"
+            />
+          </g>
+        );
+      }
+
+      return (
+        <rect
+          width={width}
+          height={height}
+          rx="9"
+          fill={fill}
+          stroke={strokeColor}
+          strokeWidth={strokeW}
+          style={{ filter: shadowFilter }}
+        />
+      );
+    }
+
+    function ShapeMiniature({ id }) {
+      const stroke = '#736049';
+      const fill = 'rgba(229, 217, 195, 0.5)';
+      if (id === 'terminal') {
+        return (
+          <svg className="w-8 h-8" viewBox="0 0 36 36">
+            <rect x="4" y="6" width="28" height="24" rx="4" fill={fill} stroke={stroke} strokeWidth="1.4" />
+            <text x="18" y="22" textAnchor="middle" fill="#433627" fontSize="11" fontWeight="600">S</text>
+          </svg>
+        );
+      }
+      if (id === 'process') {
+        return (
+          <svg className="w-8 h-8" viewBox="0 0 36 36">
+            <rect x="4" y="6" width="28" height="24" rx="3" fill={fill} stroke={stroke} strokeWidth="1.4" />
+            <text x="18" y="22" textAnchor="middle" fill="#433627" fontSize="11" fontWeight="600">P</text>
+          </svg>
+        );
+      }
+      if (id === 'decision') {
+        return (
+          <svg className="w-8 h-8" viewBox="0 0 36 36">
+            <polygon points="18,3 33,18 18,33 3,18" fill={fill} stroke={stroke} strokeWidth="1.4" />
+            <text x="18" y="22" textAnchor="middle" fill="#433627" fontSize="10.5" fontWeight="600">D</text>
+          </svg>
+        );
+      }
+      if (id === 'database') {
+        return (
+          <svg className="w-8 h-8" viewBox="0 0 36 36">
+            <path d="M 6 10 v 16 a 12 4.5 0 0 0 24 0 v -16" fill={fill} stroke={stroke} strokeWidth="1.4" />
+            <ellipse cx="18" cy="10" rx="12" ry="4.5" fill={fill} stroke={stroke} strokeWidth="1.4" />
+          </svg>
+        );
+      }
+      if (id === 'document') {
+        return (
+          <svg className="w-8 h-8" viewBox="0 0 36 36">
+            <path d="M 5 6 H 31 V 26 Q 24.5 31 18 26.5 T 5 26 Z" fill={fill} stroke={stroke} strokeWidth="1.4" />
+            <text x="18" y="20" textAnchor="middle" fill="#433627" fontSize="10" fontWeight="600">D</text>
+          </svg>
+        );
+      }
+      if (id === 'input') {
+        return (
+          <svg className="w-8 h-8" viewBox="0 0 36 36">
+            <polygon points="10,7 32,7 26,29 4,29" fill={fill} stroke={stroke} strokeWidth="1.4" />
+          </svg>
+        );
+      }
+      return (
+        <svg className="w-8 h-8" viewBox="0 0 36 36">
+          <rect x="5" y="5" width="26" height="26" rx="3" fill={fill} stroke={stroke} strokeWidth="1.4" />
+          <path d="M 24 31 L 31 24 L 24 24 Z" fill="rgba(115, 96, 73, 0.35)" />
+        </svg>
+      );
+    }
+
+    // --- MAIN APPLICATION ---
     function App() {
       const [theme, setTheme] = useState(PRESENTATION_THEMES[0]);
-      const [nodes, setNodes] = useState(PRESET_TEMPLATES[0].nodes);
+      const [nodes, setNodes] = useState(() =>
+        PRESET_TEMPLATES[0].nodes.map(n => {
+          const layout = computeAutoNodeLayout(n);
+          return { ...n, width: layout.width, height: layout.height };
+        })
+      );
       const [edges, setEdges] = useState(PRESET_TEMPLATES[0].edges);
 
       const [selectedNodeIds, setSelectedNodeIds] = useState([]);
@@ -263,31 +802,123 @@
       const [pan, setPan] = useState({ x: 0, y: 0 });
       const [activeConnectorStyle, setActiveConnectorStyle] = useState('orthogonal');
 
-      // Modals
+      const [history, setHistory] = useState([{ nodes: PRESET_TEMPLATES[0].nodes, edges: PRESET_TEMPLATES[0].edges }]);
+      const [historyIndex, setHistoryIndex] = useState(0);
+
       const [showPresentation, setShowPresentation] = useState(false);
       const [showExport, setShowExport] = useState(false);
       const [showTemplates, setShowTemplates] = useState(false);
+      const [menuOpen, setMenuOpen] = useState(false);
+      const [presStepIdx, setPresStepIdx] = useState(0);
 
-      // Drag state
       const containerRef = useRef(null);
+      const fileInputRef = useRef(null);
       const [isPanning, setIsPanning] = useState(false);
       const [startPanMouse, setStartPanMouse] = useState({ x: 0, y: 0 });
       const [draggingNodeId, setDraggingNodeId] = useState(null);
       const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
       const [snapLines, setSnapLines] = useState([]);
       const [connectingFrom, setConnectingFrom] = useState(null);
+      const [hoveredPort, setHoveredPort] = useState(null);
       const [mouseCanvasPos, setMouseCanvasPos] = useState({ x: 0, y: 0 });
 
-      // Inline text editing
       const [editingNodeId, setEditingNodeId] = useState(null);
       const [editingEdgeId, setEditingEdgeId] = useState(null);
       const [tempLabel, setTempLabel] = useState('');
 
+      // Wipe all saved data on startup and when leaving/exiting the website
       useEffect(() => {
-        if (window.lucide) {
-          window.lucide.createIcons();
+        purgeAllUserDataAndStorage();
+        const handleExit = () => purgeAllUserDataAndStorage();
+        window.addEventListener('beforeunload', handleExit);
+        window.addEventListener('pagehide', handleExit);
+        window.addEventListener('unload', handleExit);
+        return () => {
+          window.removeEventListener('beforeunload', handleExit);
+          window.removeEventListener('pagehide', handleExit);
+          window.removeEventListener('unload', handleExit);
+          purgeAllUserDataAndStorage();
+        };
+      }, []);
+
+      const saveSnapshot = useCallback((newNodes, newEdges) => {
+        setHistory(prev => {
+          const sliced = prev.slice(Math.max(0, historyIndex - 39), historyIndex + 1);
+          const next = [...sliced, { nodes: newNodes, edges: newEdges }];
+          setHistoryIndex(next.length - 1);
+          return next;
+        });
+      }, [historyIndex]);
+
+      const handleUndo = useCallback(() => {
+        if (historyIndex > 0) {
+          const prev = history[historyIndex - 1];
+          setNodes(prev.nodes);
+          setEdges(prev.edges);
+          setHistoryIndex(historyIndex - 1);
         }
-      });
+      }, [history, historyIndex]);
+
+      const handleRedo = useCallback(() => {
+        if (historyIndex < history.length - 1) {
+          const next = history[historyIndex + 1];
+          setNodes(next.nodes);
+          setEdges(next.edges);
+          setHistoryIndex(historyIndex + 1);
+        }
+      }, [history, historyIndex]);
+
+      const handleUpdateNode = useCallback((nodeId, updates, isAdd = false, skipHistory = false) => {
+        setNodes(prevNodes => {
+          let nextNodes;
+          if (isAdd) {
+            const layout = computeAutoNodeLayout(updates);
+            nextNodes = [...prevNodes, { ...updates, width: layout.width, height: layout.height }];
+          } else {
+            nextNodes = prevNodes.map(n => {
+              if (n.id !== nodeId) return n;
+              const merged = { ...n, ...updates };
+              const layout = computeAutoNodeLayout(merged);
+              const dw = layout.width - n.width;
+              const dh = layout.height - n.height;
+              const shouldRecenter = ('label' in updates || 'fontSize' in updates || 'type' in updates) && !('x' in updates);
+              return {
+                ...merged,
+                width: layout.width,
+                height: layout.height,
+                x: shouldRecenter ? Math.round(merged.x - dw / 2) : merged.x,
+                y: shouldRecenter ? Math.round(merged.y - dh / 2) : merged.y
+              };
+            });
+          }
+          if (!skipHistory) {
+            saveSnapshot(nextNodes, edges);
+          }
+          return nextNodes;
+        });
+      }, [edges, saveSnapshot]);
+
+      const handleDeleteNode = useCallback((nodeId) => {
+        const nextNodes = nodes.filter(n => n.id !== nodeId);
+        const nextEdges = edges.filter(e => e.from !== nodeId && e.to !== nodeId);
+        setNodes(nextNodes);
+        setEdges(nextEdges);
+        setSelectedNodeIds([]);
+        saveSnapshot(nextNodes, nextEdges);
+      }, [nodes, edges, saveSnapshot]);
+
+      const handleUpdateEdge = useCallback((edgeId, updates) => {
+        const nextEdges = edges.map(e => e.id === edgeId ? { ...e, ...updates } : e);
+        setEdges(nextEdges);
+        saveSnapshot(nodes, nextEdges);
+      }, [edges, nodes, saveSnapshot]);
+
+      const handleDeleteEdge = useCallback((edgeId) => {
+        const nextEdges = edges.filter(e => e.id !== edgeId);
+        setEdges(nextEdges);
+        setSelectedEdgeId(null);
+        saveSnapshot(nodes, nextEdges);
+      }, [edges, nodes, saveSnapshot]);
 
       const screenToCanvas = (sx, sy) => {
         if (!containerRef.current) return { x: 0, y: 0 };
@@ -298,12 +929,22 @@
         };
       };
 
+      const saveInlineLabel = () => {
+        if (editingNodeId) {
+          handleUpdateNode(editingNodeId, { label: tempLabel });
+          setEditingNodeId(null);
+        }
+        if (editingEdgeId) {
+          handleUpdateEdge(editingEdgeId, { label: tempLabel });
+          setEditingEdgeId(null);
+        }
+      };
+
       const handleCanvasMouseDown = (e) => {
         if (e.target.tagName === 'svg' || e.target.classList.contains('canvas-bg')) {
+          if (editingNodeId || editingEdgeId) saveInlineLabel();
           setSelectedNodeIds([]);
           setSelectedEdgeId(null);
-          setEditingNodeId(null);
-          setEditingEdgeId(null);
           setIsPanning(true);
           setStartPanMouse({ x: e.clientX - pan.x, y: e.clientY - pan.y });
         }
@@ -324,189 +965,267 @@
 
           const currNode = nodes.find(n => n.id === draggingNodeId);
           if (currNode) {
+            const layout = computeAutoNodeLayout(currNode);
             const newSnapLines = [];
-            const cCenterX = newX + currNode.width / 2;
-            const cCenterY = newY + currNode.height / 2;
+            const cCenterX = newX + layout.width / 2;
+            const cCenterY = newY + layout.height / 2;
 
             nodes.forEach(other => {
               if (other.id === draggingNodeId) return;
-              const oCenterX = other.x + other.width / 2;
-              const oCenterY = other.y + other.height / 2;
+              const oLayout = computeAutoNodeLayout(other);
+              const oCenterX = other.x + oLayout.width / 2;
+              const oCenterY = other.y + oLayout.height / 2;
 
-              if (Math.abs(cCenterX - oCenterX) < 10) {
-                newX = oCenterX - currNode.width / 2;
+              if (Math.abs(cCenterX - oCenterX) < 8) {
+                newX = oCenterX - layout.width / 2;
                 newSnapLines.push({ type: 'x', x: oCenterX });
               }
-              if (Math.abs(cCenterY - oCenterY) < 10) {
-                newY = oCenterY - currNode.height / 2;
+              if (Math.abs(cCenterY - oCenterY) < 8) {
+                newY = oCenterY - layout.height / 2;
                 newSnapLines.push({ type: 'y', y: oCenterY });
               }
             });
             setSnapLines(newSnapLines);
           }
 
-          setNodes(nodes.map(n => n.id === draggingNodeId ? { ...n, x: Math.round(newX), y: Math.round(newY) } : n));
+          handleUpdateNode(draggingNodeId, { x: Math.round(newX), y: Math.round(newY) }, false, true);
         }
       };
 
       const handleCanvasMouseUp = () => {
+        if (draggingNodeId) {
+          saveSnapshot(nodes, edges);
+        }
         setIsPanning(false);
         setDraggingNodeId(null);
         setSnapLines([]);
         setConnectingFrom(null);
       };
 
-      const handleNodeMouseDown = (e, node) => {
-        e.stopPropagation();
-        setSelectedEdgeId(null);
-        setSelectedNodeIds([node.id]);
-        const cPos = screenToCanvas(e.clientX, e.clientY);
-        setDraggingNodeId(node.id);
-        setDragOffset({ x: cPos.x - node.x, y: cPos.y - node.y });
-      };
-
-      const handlePortMouseDown = (e, node, portDir) => {
-        e.stopPropagation();
-        const ports = getNodePorts(node);
-        setConnectingFrom({ nodeId: node.id, port: ports[portDir] });
-      };
-
-      const handlePortMouseUp = (e, targetNode) => {
-        e.stopPropagation();
-        if (connectingFrom && connectingFrom.nodeId !== targetNode.id) {
-          const newEdge = {
-            id: 'edge_' + Date.now(),
-            from: connectingFrom.nodeId,
-            to: targetNode.id,
-            label: '',
-            style: activeConnectorStyle || 'orthogonal'
-          };
-          setEdges([...edges, newEdge]);
-        }
-        setConnectingFrom(null);
-      };
-
       const addNodeFromSidebar = (shapeItem) => {
         const colors = theme.nodeColors[shapeItem.id] || theme.nodeColors.process;
-        const newNode = {
+        const offset = (nodes.length % 6) * 28;
+        const baseNode = {
           id: 'node_' + Date.now(),
           type: shapeItem.id,
           label: shapeItem.name,
-          x: 350 + Math.random() * 40,
-          y: 200 + Math.random() * 40,
+          x: Math.round((340 + offset - pan.x) / zoom),
+          y: Math.round((190 + offset - pan.y) / zoom),
           width: shapeItem.defaultWidth,
           height: shapeItem.defaultHeight,
           fill: colors.fill,
           stroke: colors.stroke,
           text: colors.text,
-          fontSize: 14,
+          font: 'Inter',
+          fontSize: 13,
           fontWeight: '500',
           stepIndex: nodes.length + 1
         };
-        setNodes([...nodes, newNode]);
+        const layout = computeAutoNodeLayout(baseNode);
+        const newNode = { ...baseNode, width: layout.width, height: layout.height };
+        handleUpdateNode(newNode.id, newNode, true);
         setSelectedNodeIds([newNode.id]);
+        setSelectedEdgeId(null);
       };
 
-      const selectedNode = nodes.find(n => n.id === selectedNodeIds[0]);
+      const handleDrop = (e) => {
+        e.preventDefault();
+        const dataStr = e.dataTransfer.getData('application/json');
+        if (!dataStr) return;
+        try {
+          const shapeItem = JSON.parse(dataStr);
+          const canvasPos = screenToCanvas(e.clientX, e.clientY);
+          const colors = theme.nodeColors[shapeItem.id] || theme.nodeColors.process;
+          const baseNode = {
+            id: 'node_' + Date.now(),
+            type: shapeItem.id,
+            label: shapeItem.name,
+            width: shapeItem.defaultWidth,
+            height: shapeItem.defaultHeight,
+            fill: colors.fill,
+            stroke: colors.stroke,
+            text: colors.text,
+            font: 'Inter',
+            fontSize: 13,
+            fontWeight: '500',
+            stepIndex: nodes.length + 1
+          };
+          const layout = computeAutoNodeLayout(baseNode);
+          const newNode = {
+            ...baseNode,
+            width: layout.width,
+            height: layout.height,
+            x: Math.round(canvasPos.x - layout.width / 2),
+            y: Math.round(canvasPos.y - layout.height / 2)
+          };
+          handleUpdateNode(newNode.id, newNode, true);
+          setSelectedNodeIds([newNode.id]);
+        } catch (err) {}
+      };
+
+      const sizedNodesMap = {};
+      const sizedNodes = nodes.map(n => {
+        const activeNode = editingNodeId === n.id ? { ...n, label: tempLabel } : n;
+        const layout = computeAutoNodeLayout(activeNode);
+        const sn = { ...n, width: layout.width, height: layout.height, _lines: layout.lines, _lineHeight: layout.lineHeight };
+        sizedNodesMap[n.id] = sn;
+        return sn;
+      });
+
+      const selectedNode = sizedNodes.find(n => n.id === selectedNodeIds[0]);
       const selectedEdge = edges.find(e => e.id === selectedEdgeId);
+      const defaultEdgeColor = theme.edgeStroke || '#736049';
+      const selectedColor = theme.accent || '#7a5c3e';
+
+      const handleImportFile = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const data = JSON.parse(ev.target.result);
+            if (data.nodes && data.edges) {
+              const fitted = data.nodes.map(n => {
+                const l = computeAutoNodeLayout(n);
+                return { ...n, width: l.width, height: l.height };
+              });
+              setNodes(fitted);
+              setEdges(data.edges);
+              saveSnapshot(fitted, data.edges);
+            }
+          } catch (err) {
+            alert('Invalid JSON file.');
+          }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+      };
 
       return (
-        <div className="h-screen w-screen flex flex-col bg-slate-950 overflow-hidden font-sans">
-          {/* HEADER TOOLBAR */}
-          <header className="h-16 bg-slate-900/90 border-b border-slate-800 px-4 flex items-center justify-between z-30">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/25 font-bold text-white">
-                ⚡
-              </div>
-              <div>
-                <h1 className="font-bold text-slate-100 text-base leading-tight tracking-tight flex items-center gap-2">
-                  FlowCanvas Studio
-                  <span className="text-[10px] font-semibold uppercase tracking-wider bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/30">
-                    Deck Edition
-                  </span>
-                </h1>
-                <p className="text-[11px] text-slate-400">Presentation Flowchart Designer</p>
-              </div>
-              <button
-                onClick={() => setShowTemplates(true)}
-                className="ml-4 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition"
+        <div className="h-screen w-screen flex flex-col bg-[#f3ede0] overflow-hidden font-sans">
+          {/* HEADER */}
+          <header className="h-[68px] bg-[#efe7d6] border-b border-[#d5c7ad] px-6 flex items-center justify-between z-30 select-none shadow-[0_1px_3px_rgba(74,60,44,0.06)]">
+            <div className="flex items-center gap-10">
+              <div
+                className="flex flex-col items-center cursor-pointer"
+                onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
               >
-                Templates & Presets
-              </button>
+                <span className="text-[22px] font-semibold tracking-tight text-[#433627] leading-none font-serif">
+                  FlowCanvas
+                </span>
+                <div className="flex items-center gap-2 mt-1 w-full justify-center">
+                  <span className="h-[1px] flex-1 bg-[#9c8b70]" />
+                  <span className="text-[9px] font-semibold uppercase tracking-[0.25em] text-[#6d5d47]">STUDIO</span>
+                  <span className="h-[1px] flex-1 bg-[#9c8b70]" />
+                </div>
+              </div>
+
+              <nav className="flex items-center gap-6 text-[13px] font-medium text-[#4a3e2e]">
+                <button onClick={() => setShowTemplates(true)} className="hover:text-[#7c5d3b] transition-colors py-1 px-2 rounded-md hover:bg-[#e5dac5]/60">
+                  Templates & Presets
+                </button>
+                <span className="h-3.5 w-[1px] bg-[#d5c7ad]" />
+                <button onClick={() => fileInputRef.current?.click()} className="hover:text-[#7c5d3b] transition-colors py-1 px-2 rounded-md hover:bg-[#e5dac5]/60">
+                  Import
+                </button>
+                <input ref={fileInputRef} type="file" accept=".json" onChange={handleImportFile} className="hidden" />
+                <span className="h-3.5 w-[1px] bg-[#d5c7ad]" />
+                <button onClick={() => setShowExport(true)} className="hover:text-[#7c5d3b] transition-colors py-1 px-2 rounded-md hover:bg-[#e5dac5]/60">
+                  Export
+                </button>
+              </nav>
             </div>
 
-            {/* Canvas Zoom & Theme */}
-            <div className="flex items-center gap-2 bg-slate-800/80 p-1 rounded-xl border border-slate-700">
-              <button onClick={() => setZoom(Math.max(0.4, zoom - 0.1))} className="px-2 py-1 text-slate-300 hover:text-white">-</button>
-              <span className="text-xs font-mono w-12 text-center">{Math.round(zoom * 100)}%</span>
-              <button onClick={() => setZoom(Math.min(2.0, zoom + 0.1))} className="px-2 py-1 text-slate-300 hover:text-white">+</button>
-              <div className="h-4 w-[1px] bg-slate-700 mx-1" />
-              <select
-                value={theme.id}
-                onChange={(e) => setTheme(PRESENTATION_THEMES.find(t => t.id === e.target.value))}
-                className="bg-transparent text-xs font-medium text-slate-200 outline-none cursor-pointer px-1"
-              >
-                {PRESENTATION_THEMES.map(t => (
-                  <option key={t.id} value={t.id} className="bg-slate-900">{t.name}</option>
-                ))}
-              </select>
-            </div>
+            <div className="flex items-center gap-4">
+              <div className="hidden md:flex items-center gap-1 bg-[#e6dcc8]/80 px-2 py-1 rounded-lg border border-[#d2c3a8] text-[#544634] text-xs">
+                <button onClick={handleUndo} disabled={historyIndex <= 0} className="px-1.5 py-0.5 rounded hover:bg-[#dcd0b8] disabled:opacity-30" title="Undo">↶</button>
+                <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="px-1.5 py-0.5 rounded hover:bg-[#dcd0b8] disabled:opacity-30" title="Redo">↷</button>
+                <span className="h-3.5 w-[1px] bg-[#cbbba0] mx-1" />
+                <button onClick={() => setZoom(Math.max(0.35, +(zoom - 0.1).toFixed(2)))} className="px-1.5 rounded hover:bg-[#dcd0b8]">-</button>
+                <span onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="font-mono text-[11px] w-11 text-center cursor-pointer">{Math.round(zoom * 100)}%</span>
+                <button onClick={() => setZoom(Math.min(2.2, +(zoom + 0.1).toFixed(2)))} className="px-1.5 rounded hover:bg-[#dcd0b8]">+</button>
+              </div>
 
-            {/* Action buttons */}
-            <div className="flex items-center gap-2.5">
               <button
-                onClick={() => setShowPresentation(true)}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-md transition"
+                onClick={() => { setPresStepIdx(0); setShowPresentation(true); }}
+                disabled={nodes.length === 0}
+                className="px-5 py-2 rounded-lg bg-[#7c6143] hover:bg-[#695136] disabled:opacity-40 text-[#fdfaf3] font-medium text-[13px] shadow-sm transition-all border border-[#634c33]"
               >
-                ▶ Present Flow
+                Present Flow
               </button>
-              <button
-                onClick={() => setShowExport(true)}
-                className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-md transition"
-              >
-                Export for Deck
-              </button>
+
+              <div className="relative">
+                <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 rounded-lg text-[#5c4d3a] hover:bg-[#e4d9c3] transition">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+                {menuOpen && (
+                  <div className="absolute right-0 mt-2 w-52 rounded-xl bg-[#f5efe2] border border-[#cfc0a5] shadow-xl py-2 px-3 z-50 text-xs text-[#3d3225] space-y-1.5">
+                    <div className="font-semibold text-[10px] uppercase tracking-wider text-[#7d6c55] px-1">Theme</div>
+                    {PRESENTATION_THEMES.map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => { setTheme(t); setMenuOpen(false); }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg ${theme.id === t.id ? 'bg-[#7c6143] text-[#fdfaf3]' : 'hover:bg-[#e6dcc8]'}`}
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                    <div className="border-t border-[#d8cbb3] pt-1.5">
+                      <button
+                        onClick={() => { setNodes([]); setEdges([]); saveSnapshot([], []); setMenuOpen(false); }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-500/15 text-rose-700 font-medium"
+                      >
+                        Clear Canvas
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
-          {/* MAIN BODY */}
+          {/* MAIN WORKSPACE */}
           <div className="flex-1 flex overflow-hidden relative">
-            {/* SIDEBAR */}
-            <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col z-20">
-              <div className="p-4 border-b border-slate-800">
-                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Flow Shapes</h2>
-                <p className="text-[11px] text-slate-500 mt-1">Click to add shapes into your canvas</p>
+            {/* LEFT SIDEBAR */}
+            <aside className="w-[248px] bg-[#ede4d3] border-r border-[#d5c7ad] flex flex-col z-20 select-none">
+              <div className="px-5 pt-6 pb-3">
+                <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#4a3e2e]">FLOW SHAPES</h2>
               </div>
-
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2.5">
                 {SHAPE_TYPES.map(shape => (
                   <div
                     key={shape.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/json', JSON.stringify(shape));
+                      e.dataTransfer.effectAllowed = 'copy';
+                    }}
                     onClick={() => addNodeFromSidebar(shape)}
-                    className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/50 hover:border-blue-500/50 cursor-pointer transition"
+                    className="group flex items-center gap-3.5 px-3.5 py-3 rounded-xl bg-[#f3ecde]/80 hover:bg-[#f8f3e8] border border-[#d6c8b0] hover:border-[#9e8462] cursor-grab active:cursor-grabbing transition-all shadow-sm"
                   >
-                    <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-blue-400 font-bold text-xs">
-                      {shape.name[0]}
-                    </div>
-                    <div>
-                      <div className="text-xs font-medium text-slate-200">{shape.name}</div>
-                      <div className="text-[10px] text-slate-500 capitalize">{shape.shape} block</div>
-                    </div>
+                    <ShapeMiniature id={shape.id} />
+                    <div className="text-[13px] font-medium text-[#3b3023] truncate">{shape.name}</div>
                   </div>
                 ))}
 
-                <div className="pt-4 border-t border-slate-800 mt-4">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Connector Line Style</h3>
-                  <div className="grid grid-cols-3 gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
-                    {['orthogonal', 'curved', 'straight'].map(st => (
+                <div className="pt-4 mt-4 border-t border-[#d8cbb3]">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6d5d47] mb-2 px-1">Default Flow Line</h3>
+                  <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#e3d8c3] rounded-xl border border-[#cfc0a5]">
+                    {[
+                      { id: 'orthogonal', label: 'Step' },
+                      { id: 'curved', label: 'Curve' },
+                      { id: 'straight', label: 'Direct' }
+                    ].map(st => (
                       <button
-                        key={st}
-                        onClick={() => setActiveConnectorStyle(st)}
-                        className={`p-1.5 rounded-lg text-[11px] font-medium capitalize ${
-                          activeConnectorStyle === st ? 'bg-blue-600 text-white' : 'text-slate-400'
+                        key={st.id}
+                        onClick={() => setActiveConnectorStyle(st.id)}
+                        className={`py-1.5 px-2 rounded-lg text-[11px] font-medium transition ${
+                          activeConnectorStyle === st.id ? 'bg-[#7c6143] text-[#fdfaf3]' : 'text-[#5c4d3a] hover:bg-[#d8cbb3]/60'
                         }`}
                       >
-                        {st}
+                        {st.label}
                       </button>
                     ))}
                   </div>
@@ -514,45 +1233,49 @@
               </div>
             </aside>
 
-            {/* CANVAS */}
+            {/* CENTER CANVAS */}
             <div
               ref={containerRef}
               onMouseDown={handleCanvasMouseDown}
               onMouseMove={handleCanvasMouseMove}
               onMouseUp={handleCanvasMouseUp}
-              className={`relative flex-1 h-full w-full overflow-hidden cursor-crosshair canvas-bg ${theme.canvasBgClass}`}
+              onDrop={handleDrop}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }}
+              className={`relative flex-1 h-full w-full overflow-hidden select-none cursor-default canvas-bg ${theme.canvasBgClass}`}
             >
               <svg className="w-full h-full absolute inset-0 pointer-events-none">
                 <defs>
-                  <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                    <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+                  <marker id="arrowhead-end" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                    <polygon points="0 0.5, 8.5 3.5, 0 6.5" fill={defaultEdgeColor} />
                   </marker>
-                  <marker id="arrow-sel" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                    <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" />
+                  <marker id="arrowhead-selected" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                    <polygon points="0 0.5, 8.5 3.5, 0 6.5" fill={selectedColor} />
                   </marker>
                 </defs>
 
                 <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
-                  {/* Snap Alignment Lines */}
                   {snapLines.map((line, idx) => (
                     line.type === 'x' ? (
-                      <line key={idx} x1={line.x} y1={-10000} x2={line.x} y2={10000} stroke="#3b82f6" strokeDasharray="4 4" strokeWidth="1" />
+                      <line key={idx} x1={line.x} y1={-10000} x2={line.x} y2={10000} stroke="#9e7b56" strokeDasharray="4 4" strokeWidth="1" />
                     ) : (
-                      <line key={idx} x1={-10000} y1={line.y} x2={10000} y2={line.y} stroke="#3b82f6" strokeDasharray="4 4" strokeWidth="1" />
+                      <line key={idx} x1={-10000} y1={line.y} x2={10000} y2={line.y} stroke="#9e7b56" strokeDasharray="4 4" strokeWidth="1" />
                     )
                   ))}
 
                   {/* Edges */}
                   {edges.map(edge => {
-                    const sn = nodes.find(n => n.id === edge.from);
-                    const tn = nodes.find(n => n.id === edge.to);
+                    const sn = sizedNodesMap[edge.from];
+                    const tn = sizedNodesMap[edge.to];
                     if (!sn || !tn) return null;
-                    const { fromPort, toPort } = getBestPortPair(sn, tn);
+                    const { fromPort, toPort } = getBestPortPair(sn, tn, edge);
                     const pathInfo = calculatePathData(fromPort, toPort, edge.style || 'orthogonal');
                     const isSel = selectedEdgeId === edge.id;
+                    const isMostlyHoriz = Math.abs(toPort.x - fromPort.x) >= Math.abs(toPort.y - fromPort.y);
+                    const labelOffsetX = isMostlyHoriz ? 0 : 18;
+                    const labelOffsetY = isMostlyHoriz ? -12 : 0;
 
                     return (
-                      <g key={edge.id} className="pointer-events-auto">
+                      <g key={edge.id} className="pointer-events-auto cursor-pointer">
                         <path
                           d={pathInfo.d}
                           fill="none"
@@ -564,87 +1287,190 @@
                         <path
                           d={pathInfo.d}
                           fill="none"
-                          stroke={isSel ? '#3b82f6' : (edge.stroke || '#64748b')}
-                          strokeWidth={isSel ? '3' : '2'}
-                          markerEnd={isSel ? 'url(#arrow-sel)' : 'url(#arrow)'}
+                          stroke={isSel ? selectedColor : (edge.stroke || defaultEdgeColor)}
+                          strokeWidth={isSel ? '2.4' : '1.6'}
+                          markerEnd={isSel ? 'url(#arrowhead-selected)' : 'url(#arrowhead-end)'}
                         />
                         {edge.label && (
-                          <g transform={`translate(${pathInfo.midPoint.x}, ${pathInfo.midPoint.y})`}>
-                            <rect x={-(edge.label.length * 3.5 + 8)} y="-10" width={edge.label.length * 7 + 16} height="20" rx="4" fill="#0f172a" stroke="#475569" />
-                            <text x="0" y="3" textAnchor="middle" fill="#f8fafc" fontSize="11">{edge.label}</text>
+                          <g
+                            transform={`translate(${pathInfo.midPoint.x + labelOffsetX}, ${pathInfo.midPoint.y + labelOffsetY})`}
+                            onClick={(e) => { e.stopPropagation(); setSelectedEdgeId(edge.id); setSelectedNodeIds([]); }}
+                          >
+                            <rect
+                              x={-(edge.label.length * 3.4 + 6)}
+                              y="-9"
+                              width={edge.label.length * 6.8 + 12}
+                              height="18"
+                              rx="4"
+                              fill={theme.bgColor || '#f3ede0'}
+                              fillOpacity="0.88"
+                            />
+                            <text x="0" y="3.5" textAnchor="middle" fill={theme.textDark ? '#3b3023' : '#f8fafc'} fontSize="12" fontWeight="500">
+                              {edge.label}
+                            </text>
                           </g>
                         )}
                       </g>
                     );
                   })}
 
-                  {/* Drag connection */}
                   {connectingFrom && (
                     <path
                       d={calculatePathData(connectingFrom.port, { x: mouseCanvasPos.x, y: mouseCanvasPos.y, dir: 'center' }, activeConnectorStyle).d}
                       fill="none"
-                      stroke="#3b82f6"
-                      strokeWidth="2.5"
-                      strokeDasharray="6 4"
+                      stroke={selectedColor}
+                      strokeWidth="2"
+                      strokeDasharray="5 4"
+                      markerEnd="url(#arrowhead-selected)"
                     />
                   )}
 
                   {/* Nodes */}
-                  {nodes.map(node => {
+                  {sizedNodes.map(node => {
                     const isSel = selectedNodeIds.includes(node.id);
+                    const isEditing = editingNodeId === node.id;
                     const ports = getNodePorts(node);
+                    const lines = node._lines || [node.label];
+                    const lineHeight = node._lineHeight || 18;
+                    const fontSize = node.fontSize || 13;
+                    const totalTextHeight = lines.length * lineHeight;
+                    const startTextY = (node.height - totalTextHeight) / 2 + fontSize * 0.82 + (node.type === 'database' ? 6 : 0) - (node.type === 'document' ? 4 : 0);
+                    const badgeX = node.type === 'decision' ? node.width / 2 : node.type === 'input' ? node.width - 10 : node.width - 6;
 
                     return (
                       <g
                         key={node.id}
                         transform={`translate(${node.x}, ${node.y})`}
-                        onMouseDown={(e) => handleNodeMouseDown(e, node)}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          if (editingNodeId && editingNodeId !== node.id) saveInlineLabel();
+                          setSelectedEdgeId(null);
+                          setSelectedNodeIds([node.id]);
+                          const cPos = screenToCanvas(e.clientX, e.clientY);
+                          setDraggingNodeId(node.id);
+                          setDragOffset({ x: cPos.x - node.x, y: cPos.y - node.y });
+                        }}
+                        onMouseUp={(e) => {
+                          if (connectingFrom && connectingFrom.nodeId !== node.id) {
+                            e.stopPropagation();
+                            const sn = sizedNodesMap[connectingFrom.nodeId];
+                            const pair = getBestPortPair(sn, node, { fromPort: connectingFrom.portDir });
+                            const newEdge = {
+                              id: 'edge_' + Date.now(),
+                              from: connectingFrom.nodeId,
+                              to: node.id,
+                              fromPort: connectingFrom.portDir,
+                              toPort: pair.toDir,
+                              label: '',
+                              style: activeConnectorStyle || 'orthogonal'
+                            };
+                            const nextE = [...edges, newEdge];
+                            setEdges(nextE);
+                            saveSnapshot(nodes, nextE);
+                            setConnectingFrom(null);
+                          }
+                        }}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setEditingNodeId(node.id);
+                          setTempLabel(node.label);
+                        }}
                         className="pointer-events-auto group cursor-grab active:cursor-grabbing"
                       >
-                        <rect
-                          width={node.width}
-                          height={node.height}
-                          rx="10"
-                          fill={node.fill || '#1e293b'}
-                          stroke={isSel ? '#3b82f6' : (node.stroke || '#475569')}
-                          strokeWidth={isSel ? '3' : '2'}
-                        />
-                        <text
-                          x={node.width / 2}
-                          y={node.height / 2 + 4}
-                          textAnchor="middle"
-                          fill={node.text || '#f8fafc'}
-                          fontSize={node.fontSize || 14}
-                          fontWeight={node.fontWeight || '500'}
-                          fontFamily={node.font || 'Inter'}
-                          className="pointer-events-none select-none"
-                        >
-                          {node.label}
-                        </text>
+                        {renderNodeSvgShape(node, isSel, theme)}
 
-                        {/* Step Index Badge */}
-                        <g transform={`translate(${node.width - 8}, -6)`}>
-                          <circle r="10" fill="#3b82f6" stroke="#ffffff" strokeWidth="1.5" />
-                          <text y="3.5" textAnchor="middle" fill="#ffffff" fontSize="10" fontWeight="bold">
-                            {node.stepIndex}
+                        {isEditing ? (
+                          <foreignObject x="8" y="8" width={Math.max(80, node.width - 16)} height={Math.max(40, node.height - 16)}>
+                            <div className="h-full w-full flex items-center justify-center">
+                              <textarea
+                                autoFocus
+                                value={tempLabel}
+                                onChange={(e) => {
+                                  setTempLabel(e.target.value);
+                                  handleUpdateNode(node.id, { label: e.target.value }, false, true);
+                                }}
+                                onBlur={saveInlineLabel}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveInlineLabel(); }
+                                }}
+                                className="w-full h-full bg-[#fdfaf3]/95 text-[#2c251d] text-xs p-1.5 rounded-lg border border-[#7c6143] outline-none text-center resize-none font-medium"
+                              />
+                            </div>
+                          </foreignObject>
+                        ) : (
+                          <text
+                            x={node.width / 2}
+                            textAnchor="middle"
+                            fill={node.text || (theme.textDark ? '#2c251d' : '#f8fafc')}
+                            fontSize={fontSize}
+                            fontWeight={node.fontWeight || '500'}
+                            fontFamily={node.font || 'Inter'}
+                            className="pointer-events-none select-none"
+                          >
+                            {lines.map((line, i) => (
+                              <tspan key={i} x={node.width / 2} y={startTextY + i * lineHeight}>
+                                {line}
+                              </tspan>
+                            ))}
                           </text>
-                        </g>
+                        )}
 
-                        {/* Connection Ports */}
-                        {['top', 'right', 'bottom', 'left'].map(dir => (
-                          <circle
-                            key={dir}
-                            cx={ports[dir].x - node.x}
-                            cy={ports[dir].y - node.y}
-                            r="6"
-                            fill="#3b82f6"
-                            stroke="#ffffff"
-                            strokeWidth="2"
-                            onMouseDown={(e) => handlePortMouseDown(e, node, dir)}
-                            onMouseUp={(e) => handlePortMouseUp(e, node)}
-                            className="opacity-0 group-hover:opacity-100 cursor-crosshair transition-opacity"
-                          />
-                        ))}
+                        {node.stepIndex && (
+                          <g transform={`translate(${badgeX}, -4)`} className="pointer-events-none">
+                            <circle r="11.5" fill="#f6efe0" stroke="#7a6852" strokeWidth="1.2" />
+                            <text y="3.8" textAnchor="middle" fill="#3b3023" fontSize="11" fontWeight="600">
+                              {node.stepIndex}
+                            </text>
+                          </g>
+                        )}
+
+                        {['top', 'right', 'bottom', 'left'].map(dir => {
+                          const p = ports[dir];
+                          const lx = p.x - node.x;
+                          const ly = p.y - node.y;
+                          return (
+                            <g key={dir}>
+                              <circle
+                                cx={lx}
+                                cy={ly}
+                                r="12"
+                                fill="transparent"
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  setConnectingFrom({ nodeId: node.id, portDir: dir, port: ports[dir] });
+                                }}
+                                onMouseUp={(e) => {
+                                  e.stopPropagation();
+                                  if (connectingFrom && connectingFrom.nodeId !== node.id) {
+                                    const newEdge = {
+                                      id: 'edge_' + Date.now(),
+                                      from: connectingFrom.nodeId,
+                                      to: node.id,
+                                      fromPort: connectingFrom.portDir,
+                                      toPort: dir,
+                                      label: '',
+                                      style: activeConnectorStyle || 'orthogonal'
+                                    };
+                                    const nextE = [...edges, newEdge];
+                                    setEdges(nextE);
+                                    saveSnapshot(nodes, nextE);
+                                  }
+                                  setConnectingFrom(null);
+                                }}
+                                className="cursor-crosshair"
+                              />
+                              <circle
+                                cx={lx}
+                                cy={ly}
+                                r="5"
+                                fill="#f6efe0"
+                                stroke="#6d5d47"
+                                strokeWidth="1.8"
+                                className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"
+                              />
+                            </g>
+                          );
+                        })}
                       </g>
                     );
                   })}
@@ -652,147 +1478,220 @@
               </svg>
             </div>
 
-            {/* INSPECTOR */}
-            <aside className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col z-20">
-              <div className="p-4 border-b border-slate-800">
-                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Inspector</h2>
+            {/* RIGHT INSPECTOR */}
+            <aside className="w-[272px] bg-[#ede4d3] border-l border-[#d5c7ad] flex flex-col z-20 select-none overflow-y-auto">
+              <div className="px-6 pt-6 pb-3 flex items-center justify-between">
+                <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#4a3e2e]">INSPECTOR</h2>
               </div>
-              <div className="p-4 space-y-4 text-xs">
-                {selectedNode ? (
-                  <>
-                    <div>
-                      <label className="font-semibold text-slate-400 block mb-1">Text Label</label>
-                      <textarea
-                        value={selectedNode.label}
-                        onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, label: e.target.value } : n))}
-                        rows={2}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="font-semibold text-slate-400 block mb-1">Presentation Step Index</label>
-                      <input
-                        type="number"
-                        value={selectedNode.stepIndex || 1}
-                        onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, stepIndex: parseInt(e.target.value) || 1 } : n))}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none"
-                      />
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
+
+              {!selectedNode && !selectedEdge ? (
+                <div className="flex-1 px-6 flex flex-col items-center justify-center text-center">
+                  <p className="text-[13px] text-[#72634f] leading-relaxed max-w-[185px]">
+                    Select a block or connection to edit its properties.
+                  </p>
+                  <div className="flex items-center gap-3 mt-5 text-[#9c8b70]">
+                    <span className="w-8 h-[1px] bg-[#c5b69c]" />
+                    <span className="text-sm text-[#a39176]">⚙</span>
+                    <span className="w-8 h-[1px] bg-[#c5b69c]" />
+                  </div>
+                </div>
+              ) : (
+                <div className="px-5 pb-6 pt-2 space-y-4 text-xs text-[#3b3023]">
+                  {selectedNode && (
+                    <>
                       <div>
-                        <span className="text-[10px] text-slate-500 block mb-1">Fill</span>
-                        <input
-                          type="color"
-                          value={selectedNode.fill || '#1e293b'}
-                          onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, fill: e.target.value } : n))}
-                          className="w-full h-8 bg-transparent rounded cursor-pointer"
+                        <label className="font-semibold text-[#5c4d3a] flex justify-between mb-1">
+                          <span>Block Text</span>
+                          <span className="text-[10px] font-normal text-[#87755d]">Auto-fits box</span>
+                        </label>
+                        <textarea
+                          value={selectedNode.label}
+                          onChange={(e) => handleUpdateNode(selectedNode.id, { label: e.target.value })}
+                          rows={3}
+                          className="w-full bg-[#f6f1e6] border border-[#cfc0a5] rounded-xl p-2.5 text-[#2c251d] outline-none"
                         />
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block mb-1">Border</span>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1">Step Badge Number</label>
                         <input
-                          type="color"
-                          value={selectedNode.stroke || '#3b82f6'}
-                          onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, stroke: e.target.value } : n))}
-                          className="w-full h-8 bg-transparent rounded cursor-pointer"
+                          type="number"
+                          min="1"
+                          value={selectedNode.stepIndex || 1}
+                          onChange={(e) => handleUpdateNode(selectedNode.id, { stepIndex: parseInt(e.target.value) || 1 })}
+                          className="w-full bg-[#f6f1e6] border border-[#cfc0a5] rounded-xl p-2 text-[#2c251d] outline-none"
                         />
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block mb-1">Text</span>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1">Block Shape</label>
+                        <select
+                          value={selectedNode.type}
+                          onChange={(e) => handleUpdateNode(selectedNode.id, { type: e.target.value })}
+                          className="w-full bg-[#f6f1e6] border border-[#cfc0a5] rounded-xl p-2 text-[#2c251d] outline-none"
+                        >
+                          {SHAPE_TYPES.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1.5">Studio Palette</label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {COLOR_PRESETS.map((p, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => handleUpdateNode(selectedNode.id, { fill: p.fill, stroke: p.stroke, text: p.text })}
+                              className="h-7 rounded-lg border border-[#b5a489] flex items-center justify-center"
+                              style={{ backgroundColor: p.fill }}
+                            >
+                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.stroke }} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteNode(selectedNode.id)}
+                        className="w-full py-2 rounded-xl bg-[#a14538]/15 text-[#8f3529] font-semibold hover:bg-[#a14538]/25 transition border border-[#a14538]/30"
+                      >
+                        Delete Block
+                      </button>
+                    </>
+                  )}
+
+                  {selectedEdge && (
+                    <>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1">Connection Label</label>
                         <input
-                          type="color"
-                          value={selectedNode.text || '#f8fafc'}
-                          onChange={(e) => setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, text: e.target.value } : n))}
-                          className="w-full h-8 bg-transparent rounded cursor-pointer"
+                          type="text"
+                          value={selectedEdge.label || ''}
+                          onChange={(e) => handleUpdateEdge(selectedEdge.id, { label: e.target.value })}
+                          className="w-full bg-[#f6f1e6] border border-[#cfc0a5] rounded-xl p-2.5 text-[#2c251d] outline-none"
                         />
                       </div>
-                    </div>
-                    <button
-                      onClick={() => setNodes(nodes.filter(n => n.id !== selectedNode.id))}
-                      className="w-full py-2 rounded-lg bg-rose-500/20 text-rose-300 font-semibold hover:bg-rose-500/30 transition"
-                    >
-                      Delete Block
-                    </button>
-                  </>
-                ) : selectedEdge ? (
-                  <>
-                    <div>
-                      <label className="font-semibold text-slate-400 block mb-1">Line Label</label>
-                      <input
-                        type="text"
-                        value={selectedEdge.label || ''}
-                        onChange={(e) => setEdges(edges.map(ev => ev.id === selectedEdge.id ? { ...ev, label: e.target.value } : ev))}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none"
-                      />
-                    </div>
-                    <button
-                      onClick={() => setEdges(edges.filter(ev => ev.id !== selectedEdge.id))}
-                      className="w-full py-2 rounded-lg bg-rose-500/20 text-rose-300 font-semibold hover:bg-rose-500/30 transition"
-                    >
-                      Delete Connection
-                    </button>
-                  </>
-                ) : (
-                  <p className="text-slate-500 text-center py-6">Select any block or connection line to edit</p>
-                )}
-              </div>
+                      <div>
+                        <label className="font-semibold text-[#5c4d3a] block mb-1">Flow Line Style</label>
+                        <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#e3d8c3] rounded-xl border border-[#cfc0a5]">
+                          {['orthogonal', 'curved', 'straight'].map(st => (
+                            <button
+                              key={st}
+                              onClick={() => handleUpdateEdge(selectedEdge.id, { style: st })}
+                              className={`p-1.5 rounded-lg capitalize ${
+                                (selectedEdge.style || 'orthogonal') === st ? 'bg-[#7c6143] text-[#fdfaf3]' : 'text-[#5c4d3a]'
+                              }`}
+                            >
+                              {st === 'orthogonal' ? 'Step' : st}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteEdge(selectedEdge.id)}
+                        className="w-full py-2 rounded-xl bg-[#a14538]/15 text-[#8f3529] font-semibold hover:bg-[#a14538]/25 transition border border-[#a14538]/30"
+                      >
+                        Delete Connection
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </aside>
           </div>
 
-          {/* PRESENTATION MODAL */}
-          {showPresentation && (
-            <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col justify-between p-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-bold text-white">Slide Deck Presentation Mode</h2>
-                <button onClick={() => setShowPresentation(false)} className="px-3 py-1 bg-slate-800 text-white rounded">Close</button>
-              </div>
-              <div className="flex-1 flex items-center justify-center">
-                <p className="text-slate-400 text-xs">Interactive Slide Presentation Walkthrough Ready</p>
+          {/* TEMPLATES MODAL */}
+          {showTemplates && (
+            <div className="fixed inset-0 z-50 bg-[#2c251d]/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-lg bg-[#f5efe2] border border-[#cfc0a5] rounded-2xl p-6 relative text-[#2c251d] shadow-2xl">
+                <button onClick={() => setShowTemplates(false)} className="absolute top-4 right-4 text-[#72634f] hover:text-[#2c251d]">✕</button>
+                <h2 className="text-base font-bold mb-1">Templates & Presets</h2>
+                <p className="text-xs text-[#72634f] mb-4">Load a pre-built workflow onto the canvas</p>
+                <div className="space-y-2.5">
+                  {PRESET_TEMPLATES.map(tpl => (
+                    <div
+                      key={tpl.id}
+                      onClick={() => {
+                        const fitted = tpl.nodes.map(n => {
+                          const l = computeAutoNodeLayout(n);
+                          return { ...n, width: l.width, height: l.height };
+                        });
+                        setNodes(fitted);
+                        setEdges(tpl.edges);
+                        saveSnapshot(fitted, tpl.edges);
+                        setShowTemplates(false);
+                      }}
+                      className="p-3.5 bg-[#ede4d3] hover:bg-[#e5d9c3] border border-[#cfc0a5] rounded-xl cursor-pointer transition"
+                    >
+                      <div className="text-xs font-bold text-[#2c251d]">{tpl.name}</div>
+                      <div className="text-[11px] text-[#6d5d47] mt-0.5">{tpl.description}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}
 
           {/* EXPORT MODAL */}
           {showExport && (
-            <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
-              <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 relative text-slate-100">
-                <button onClick={() => setShowExport(false)} className="absolute top-4 right-4 text-slate-400">✕</button>
-                <h2 className="text-base font-bold mb-4">Export Options</h2>
-                <div className="space-y-3">
+            <div className="fixed inset-0 z-50 bg-[#2c251d]/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-md bg-[#f5efe2] border border-[#cfc0a5] rounded-2xl p-6 relative text-[#2c251d] shadow-2xl">
+                <button onClick={() => setShowExport(false)} className="absolute top-4 right-4 text-[#72634f] hover:text-[#2c251d]">✕</button>
+                <h2 className="text-base font-bold mb-1">Export Flowchart</h2>
+                <p className="text-xs text-[#72634f] mb-4">Download your flowchart project</p>
+                <div className="space-y-2.5">
                   <button
                     onClick={() => {
-                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ nodes, edges }));
-                      const dlAnchorElem = document.createElement('a');
-                      dlAnchorElem.setAttribute("href", dataStr);
-                      dlAnchorElem.setAttribute("download", "flowchart.json");
-                      dlAnchorElem.click();
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ version: '1.0', theme: theme.id, nodes, edges }, null, 2));
+                      const a = document.createElement('a');
+                      a.setAttribute("href", dataStr);
+                      a.setAttribute("download", `flowcanvas-${Date.now()}.json`);
+                      a.click();
                     }}
-                    className="w-full py-2.5 rounded-xl bg-blue-600 font-semibold text-xs text-white"
+                    className="w-full py-3 rounded-xl bg-[#7c6143] hover:bg-[#695136] font-semibold text-xs text-[#fdfaf3] shadow"
                   >
-                    Download JSON Project
+                    Download Editable JSON Project
                   </button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TEMPLATES MODAL */}
-          {showTemplates && (
-            <div className="fixed inset-0 z-50 bg-slate-950/80 flex items-center justify-center p-4">
-              <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 relative">
-                <button onClick={() => setShowTemplates(false)} className="absolute top-4 right-4 text-slate-400">✕</button>
-                <h2 className="text-base font-bold text-white mb-3">Starter Templates</h2>
-                <div className="space-y-2">
-                  {PRESET_TEMPLATES.map(tpl => (
-                    <div
-                      key={tpl.id}
-                      onClick={() => { setNodes(tpl.nodes); setEdges(tpl.edges); setShowTemplates(false); }}
-                      className="p-3 bg-slate-800 hover:bg-slate-700/80 rounded-xl cursor-pointer"
-                    >
-                      <div className="text-xs font-bold text-white">{tpl.name}</div>
-                      <div className="text-[11px] text-slate-400">{tpl.description}</div>
-                    </div>
-                  ))}
+          {/* PRESENTATION MODAL */}
+          {showPresentation && (
+            <div className="fixed inset-0 z-50 bg-[#231d16]/95 flex flex-col justify-between p-6">
+              <div className="flex items-center justify-between text-[#f6efe0]">
+                <h2 className="text-sm font-bold">FlowCanvas Presentation Mode (Step {presStepIdx + 1} of {sizedNodes.length})</h2>
+                <button onClick={() => setShowPresentation(false)} className="px-3.5 py-1.5 bg-[#3a3024] text-[#e6dcc8] rounded-xl text-xs">Exit</button>
+              </div>
+              <div className={`flex-1 my-4 rounded-2xl border border-[#cfc0a5] overflow-hidden flex items-center justify-center ${theme.canvasBgClass}`}>
+                <svg className="w-full h-full" viewBox="0 0 1250 560" preserveAspectRatio="xMidYMid meet">
+                  {edges.map(edge => {
+                    const sn = sizedNodesMap[edge.from];
+                    const tn = sizedNodesMap[edge.to];
+                    if (!sn || !tn) return null;
+                    const { fromPort, toPort } = getBestPortPair(sn, tn, edge);
+                    const pathInfo = calculatePathData(fromPort, toPort, edge.style || 'orthogonal');
+                    return <path key={edge.id} d={pathInfo.d} fill="none" stroke="#7c6143" strokeWidth="2.2" className="animate-flow" />;
+                  })}
+                  {sizedNodes.map((node, idx) => {
+                    const isActive = idx === presStepIdx;
+                    const lines = node._lines || [node.label];
+                    const lineHeight = node._lineHeight || 18;
+                    const fontSize = node.fontSize || 13;
+                    const totalTextHeight = lines.length * lineHeight;
+                    const startTextY = (node.height - totalTextHeight) / 2 + fontSize * 0.82;
+                    return (
+                      <g key={node.id} transform={`translate(${node.x}, ${node.y})`} style={{ opacity: idx <= presStepIdx ? 1 : 0.3 }}>
+                        {renderNodeSvgShape(node, isActive, theme)}
+                        <text x={node.width / 2} textAnchor="middle" fill={node.text || '#2c251d'} fontSize={fontSize} fontWeight="500">
+                          {lines.map((l, i) => <tspan key={i} x={node.width / 2} y={startTextY + i * lineHeight}>{l}</tspan>)}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+              <div className="flex items-center justify-between bg-[#efe7d6] border border-[#cfc0a5] rounded-2xl px-6 py-3">
+                <button onClick={() => setPresStepIdx(0)} className="px-3 py-1.5 rounded-xl bg-[#e3d8c3] text-xs font-medium">Restart</button>
+                <div className="flex gap-2">
+                  <button onClick={() => setPresStepIdx(p => Math.max(0, p - 1))} disabled={presStepIdx === 0} className="px-4 py-1.5 rounded-xl bg-[#e3d8c3] disabled:opacity-40 text-xs font-medium">Previous</button>
+                  <button onClick={() => setPresStepIdx(p => Math.min(sizedNodes.length - 1, p + 1))} disabled={presStepIdx === sizedNodes.length - 1} className="px-5 py-1.5 rounded-xl bg-[#7c6143] text-[#fdfaf3] disabled:opacity-40 text-xs font-semibold">Next Step</button>
                 </div>
               </div>
             </div>
